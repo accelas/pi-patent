@@ -1,5 +1,5 @@
 import { UserError } from "../../../errors.js";
-import { SearchError, type SearchOptions, type SearchProvider, type SearchResult } from "../types.js";
+import { SearchError, type SearchErrorKind, type SearchOptions, type SearchProvider, type SearchResult } from "../types.js";
 
 interface TavilyResult {
 	title: string;
@@ -53,7 +53,7 @@ export class TavilyProvider implements SearchProvider {
 	}
 }
 
-function mapStatus(status: number): "backend" | "auth" | "rate_limit" | "bad_request" | "unknown" {
+function mapStatus(status: number): SearchErrorKind {
 	if (status >= 500) return "backend";
 	if (status === 401 || status === 403) return "auth";
 	if (status === 429) return "rate_limit";
