@@ -19,9 +19,11 @@ export function makeWebSearchTool(providerName: SearchProviderName): AgentTool<t
 			"Prior-art sanity check. Issue at most 5 targeted queries per evaluation. " +
 			"Prefer technical specificity over generic phrasing.",
 		parameters: WebSearchParams,
-		execute: async (_id, { query, max_results }) => {
+		execute: async (_id, { query, max_results }, signal) => {
 			try {
-				const opts = max_results !== undefined ? { maxResults: max_results } : {};
+				const opts: { maxResults?: number; signal?: AbortSignal } = {};
+				if (max_results !== undefined) opts.maxResults = max_results;
+				if (signal) opts.signal = signal;
 				const results = await provider.search(query, opts);
 				return {
 					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],

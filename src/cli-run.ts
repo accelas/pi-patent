@@ -22,19 +22,28 @@ import { AXIS_NAMES } from "./types.js";
 
 // ---------- Input reading ----------
 
-async function readDisclosure(input?: string): Promise<string> {
+async function readDisclosure(input: string | undefined, signal?: AbortSignal): Promise<string> {
 	if (input) return fs.readFileSync(input, "utf-8");
 	if (!process.stdin.isTTY) {
 		const chunks: Buffer[] = [];
 		for await (const c of process.stdin) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
 		return Buffer.concat(chunks).toString("utf-8");
 	}
-	// Interactive prompt — read lines until an empty line.
-	console.log("Paste the disclosure; end with an empty line.");
+	// Interactive prompt — read lines until TWO consecutive blank lines, or EOF.
+	// Single blank lines inside a multi-paragraph disclosure are preserved as paragraph breaks.
+	console.log("Paste the disclosure; end with TWO consecutive blank lines (or Ctrl-D).");
 	let buf = "";
+	let blanks = 0;
 	while (true) {
-		const line = await readLine();
-		if (line === "") break;
+		const line = await readLine(signal);
+		if (line === "") {
+			if (buf.length === 0) continue; // ignore blanks before any content
+			blanks++;
+			if (blanks >= 2) break;
+			buf += "\n";
+			continue;
+		}
+		blanks = 0;
 		buf += `${line}\n`;
 	}
 	return buf;
@@ -62,42 +71,41 @@ function preflight(cfg: ResolvedConfig): void {
 
 // ---------- Interactive prompt for ask_user ----------
 
-async function terminalPrompt(question: string, options?: string[]): Promise<string> {
-	// Refuse to silently fabricate answers when there is no interactive stdin.
-	// This happens if the user piped a disclosure AND the intake agent now wants
-	// a clarifying answer: stdin is already at EOF. Failing loud is safer than
-	// letting the CLI pick options[0] for scope/prior-art on a sensitive disclosure.
-	if (stdinExhausted()) {
-		throw new UserError(
-			"Intake agent wants a clarifying answer but stdin is not interactive (it was consumed or closed). " +
-				"Either run pi-patent in a real terminal, or use --input <file> with a disclosure rich enough that intake can finalize without questions.",
-		);
-	}
-	if (options?.length) {
-		const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
-		writePrompt(`\nQ: ${question}\n${lines}\n> `);
-		const answer = (await readLine()).trim();
-		const n = Number(answer);
-		if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
-			const chosen = options[n - 1];
-			if (chosen !== undefined) return chosen;
+function makeTerminalPrompt(signal?: AbortSignal) {
+	return async function terminalPrompt(question: string, options?: string[], inner?: AbortSignal): Promise<string> {
+		// Signal precedence: per-call > harness-level.
+		const effective = inner ?? signal;
+		// Refuse to silently fabricate answers when there is no interactive stdin.
+		if (stdinExhausted()) {
+			throw new UserError(
+				"Intake agent wants a clarifying answer but stdin is not interactive (it was consumed or closed). " +
+					"Either run pi-patent in a real terminal, or use --input <file> with a disclosure rich enough that intake can finalize without questions.",
+			);
 		}
-		if (options.includes(answer)) return answer;
-		// Non-empty, non-matching answer: pass it through verbatim (the LLM may still accept it).
-		if (answer) return answer;
-		// Empty answer: refuse rather than defaulting silently.
-		throw new UserError(
-			`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
-		);
-	}
-	writePrompt(`\nQ: ${question}\n> `);
-	const answer = (await readLine()).trim();
-	if (!answer) {
-		throw new UserError(
-			`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
-		);
-	}
-	return answer;
+		if (options?.length) {
+			const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
+			writePrompt(`\nQ: ${question}\n${lines}\n> `);
+			const answer = (await readLine(effective)).trim();
+			const n = Number(answer);
+			if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
+				const chosen = options[n - 1];
+				if (chosen !== undefined) return chosen;
+			}
+			if (options.includes(answer)) return answer;
+			if (answer) return answer;
+			throw new UserError(
+				`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
+			);
+		}
+		writePrompt(`\nQ: ${question}\n> `);
+		const answer = (await readLine(effective)).trim();
+		if (!answer) {
+			throw new UserError(
+				`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
+			);
+		}
+		return answer;
+	};
 }
 
 // ---------- Progress display ----------
@@ -107,6 +115,15 @@ function formatScores(v: Verdict): string {
 }
 
 function makeProgressReporter(cfg: ResolvedConfig): (ev: LoopEvent) => void {
+	if (cfg.quiet) {
+		// Quiet mode: one compact line per iteration completion; skip start banner + focus hint.
+		return (ev: LoopEvent) => {
+			if (ev.type === "iter_done") {
+				const v = ev.verdict;
+				console.log(`iter ${ev.iteration}/${cfg.max_iter}: ${v.verdict} (${formatScores(v)})`);
+			}
+		};
+	}
 	return (ev: LoopEvent) => {
 		if (ev.type === "iter_start") {
 			console.log(`\n[iter ${ev.iteration}/${cfg.max_iter}] drafting + evaluating...`);
@@ -170,13 +187,18 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	};
 	const cfg = loadConfigFromDisk(cliArgs);
 
-	// Abort plumbing — SIGINT triggers a graceful abort.
+	// Abort plumbing — SIGINT or SIGTERM triggers a graceful abort.
 	const abortController = new AbortController();
 	const onSigint = () => {
 		console.error("\nAborting (SIGINT)...");
 		abortController.abort();
 	};
+	const onSigterm = () => {
+		console.error("\nAborting (SIGTERM)...");
+		abortController.abort();
+	};
 	process.on("SIGINT", onSigint);
+	process.on("SIGTERM", onSigterm);
 
 	let session: SessionWriter | null = null;
 	let lastCompletedIteration = 0;
@@ -184,7 +206,7 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	try {
 		// Read disclosure FIRST and validate length BEFORE preflight (spec §12.1.1).
 		// Must live INSIDE the try so UserError for short input maps to exit code 2.
-		const disclosure = (await readDisclosure(parsed.input)).trim();
+		const disclosure = (await readDisclosure(parsed.input, abortController.signal)).trim();
 		if (disclosure.length < 20) {
 			throw new UserError(
 				`Disclosure too short (${disclosure.length} chars). Provide at least 20 characters describing the invention.`,
@@ -195,6 +217,7 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 
 		// Intake phase
 		console.log("Running intake...");
+		const terminalPrompt = makeTerminalPrompt(abortController.signal);
 		const { intake, transcript } = await runIntake(disclosure, cfg, defaultIntakeDeps(cfg, terminalPrompt));
 
 		// Open session once intake is accepted.
@@ -259,5 +282,6 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 		return exitFromError(err);
 	} finally {
 		process.off("SIGINT", onSigint);
+		process.off("SIGTERM", onSigterm);
 	}
 }

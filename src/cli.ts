@@ -42,7 +42,14 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 
 	const out: ParsedArgs = {};
 	if (values.input !== undefined) out.input = values.input;
-	if (values["max-iter"] !== undefined) out.maxIter = Number(values["max-iter"]);
+	if (values["max-iter"] !== undefined) {
+		const raw = values["max-iter"];
+		const n = Number(raw);
+		if (!Number.isInteger(n) || n < 1) {
+			throw new UserError(`--max-iter must be a positive integer (got "${raw}").`);
+		}
+		out.maxIter = n;
+	}
 	if (values.model !== undefined) out.model = values.model;
 	if (values.out !== undefined) out.out = values.out;
 	if (values.quiet !== undefined) out.quiet = values.quiet;

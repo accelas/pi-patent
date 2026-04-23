@@ -36,4 +36,14 @@ describe("FileCredentialStore", () => {
 		const stat = fs.statSync(path.join(tmpDir, "anthropic.json"));
 		expect(stat.mode & 0o777).toBe(0o600);
 	});
+
+	it("load throws UserError with recovery hint on invalid JSON", () => {
+		fs.writeFileSync(path.join(tmpDir, "anthropic.json"), "not-json{{{");
+		expect(() => store.load("anthropic")).toThrow(/corrupt.*pi-patent login anthropic/);
+	});
+
+	it("load throws UserError when JSON is wrong shape (missing access)", () => {
+		fs.writeFileSync(path.join(tmpDir, "anthropic.json"), JSON.stringify({ refresh: "r" }));
+		expect(() => store.load("anthropic")).toThrow(/unexpected shape.*pi-patent login anthropic/);
+	});
 });

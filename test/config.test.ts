@@ -73,4 +73,15 @@ model = "gpt-5.3-codex"
 		const toml = `[models.drafter]\nthinking = "meduim"`;
 		expect(() => loadConfig({ tomlSource: toml, cliArgs: {} })).toThrow(/Invalid thinking/);
 	});
+
+	it("rejects zero/negative/non-integer max_iter from TOML", () => {
+		expect(() => loadConfig({ tomlSource: "max_iter = 0", cliArgs: {} })).toThrow(/max_iter.*positive integer/);
+		expect(() => loadConfig({ tomlSource: "max_iter = -1", cliArgs: {} })).toThrow(/max_iter.*positive integer/);
+		expect(() => loadConfig({ tomlSource: "max_iter = 1.5", cliArgs: {} })).toThrow(/max_iter.*positive integer/);
+	});
+
+	it("rejects zero/negative max_iter from CLI", () => {
+		expect(() => loadConfig({ tomlSource: null, cliArgs: { maxIter: 0 } })).toThrow(/positive integer/);
+		expect(() => loadConfig({ tomlSource: null, cliArgs: { maxIter: -3 } })).toThrow(/positive integer/);
+	});
 });

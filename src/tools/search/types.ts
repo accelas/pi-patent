@@ -7,6 +7,8 @@ export interface SearchResult {
 
 export interface SearchOptions {
 	maxResults?: number;
+	/** Propagated from the tool's execute() signal; aborts in-flight fetches. */
+	signal?: AbortSignal;
 }
 
 export interface SearchProvider {

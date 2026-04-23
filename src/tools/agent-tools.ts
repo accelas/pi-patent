@@ -2,7 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { IntakeResultSchema, VerdictSchema } from "../types.js";
 
-export type PromptUserFn = (question: string, options?: string[]) => Promise<string>;
+export type PromptUserFn = (question: string, options?: string[], signal?: AbortSignal) => Promise<string>;
 
 const AskUserParams = Type.Object({
 	question: Type.String(),
@@ -17,9 +17,9 @@ export function makeAskUserTool(promptUser: PromptUserFn): AgentTool<typeof AskU
 			"Ask the inventor a clarifying question. Use sparingly — only when you cannot draft without the info. " +
 			"Prefer single clear questions over bundled ones.",
 		parameters: AskUserParams,
-		execute: async (_id, { question, options }) => {
+		execute: async (_id, { question, options }, signal) => {
 			// The 6-call cap is enforced in runIntake's beforeToolCall hook (§7.2), not here.
-			const answer = await promptUser(question, options);
+			const answer = await promptUser(question, options, signal);
 			return {
 				content: [{ type: "text", text: answer }],
 				details: { question, options: options ?? null, answer },

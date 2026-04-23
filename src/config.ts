@@ -14,6 +14,13 @@ function validateThreshold(value: unknown, context: string): 1 | 2 | 3 | 4 | 5 {
 	return value as 1 | 2 | 3 | 4 | 5;
 }
 
+function validateMaxIter(value: unknown, context: string): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+		throw new UserError(`${context} must be a positive integer (got ${JSON.stringify(value)}).`);
+	}
+	return value;
+}
+
 function validateThinking(value: unknown, context: string): ThinkingLevel {
 	if (typeof value !== "string" || !VALID_THINKING.has(value as ThinkingLevel)) {
 		throw new UserError(
@@ -81,8 +88,10 @@ export function loadConfig(opts: LoadConfigOpts): ResolvedConfig {
 	const outDirRaw = (opts.cliArgs.out ?? (toml.out_dir as string) ?? "./patents") as string;
 	const out_dir = outDirRaw.startsWith("~/") ? path.join(home, outDirRaw.slice(2)) : path.resolve(outDirRaw);
 
+	const rawMaxIter = opts.cliArgs.maxIter ?? toml.max_iter ?? 5;
+
 	return {
-		max_iter: opts.cliArgs.maxIter ?? (toml.max_iter as number) ?? 5,
+		max_iter: validateMaxIter(rawMaxIter, "max_iter"),
 		thresholds,
 		out_dir,
 		quiet: opts.cliArgs.quiet ?? (toml.quiet as boolean) ?? false,

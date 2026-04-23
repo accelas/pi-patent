@@ -71,4 +71,36 @@ describe("TavilyProvider.search", () => {
 			expect((e as SearchError).kind).toBe("backend");
 		}
 	});
+
+	it("non-JSON 200 body → SearchError(kind=unknown)", async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			json: async () => {
+				throw new Error("Unexpected token");
+			},
+		});
+		try {
+			await new TavilyProvider().search("q");
+			expect.fail("should throw");
+		} catch (e) {
+			expect(e).toBeInstanceOf(SearchError);
+			expect((e as SearchError).kind).toBe("unknown");
+			expect((e as SearchError).message).toMatch(/non-JSON/);
+		}
+	});
+
+	it("JSON body missing 'results' array → SearchError(kind=unknown)", async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			json: async () => ({ answer: "no results field" }),
+		});
+		try {
+			await new TavilyProvider().search("q");
+			expect.fail("should throw");
+		} catch (e) {
+			expect(e).toBeInstanceOf(SearchError);
+			expect((e as SearchError).kind).toBe("unknown");
+			expect((e as SearchError).message).toMatch(/unexpected shape/);
+		}
+	});
 });

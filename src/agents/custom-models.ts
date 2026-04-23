@@ -12,6 +12,13 @@ import type { Api, Model } from "@mariozechner/pi-ai";
  */
 export function buildCustomModel(provider: string, modelId: string): Model<Api> | null {
 	if (provider === "openrouter") {
+		// OpenRouter optionally attributes traffic via HTTP-Referer + X-Title headers.
+		// These are rankings metadata only (not required). We set X-Title to a stable
+		// identifier; HTTP-Referer is left to the user via PI_PATENT_HTTP_REFERER so we
+		// don't ship a placeholder in production.
+		const headers: Record<string, string> = { "X-Title": "pi-patent" };
+		if (process.env.PI_PATENT_HTTP_REFERER) headers["HTTP-Referer"] = process.env.PI_PATENT_HTTP_REFERER;
+
 		return {
 			id: modelId,
 			name: modelId,
@@ -23,10 +30,7 @@ export function buildCustomModel(provider: string, modelId: string): Model<Api> 
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000,
 			maxTokens: 8192,
-			headers: {
-				"HTTP-Referer": "https://github.com/your-org/pi-patent",
-				"X-Title": "pi-patent",
-			},
+			headers,
 		} as unknown as Model<Api>;
 	}
 	return null;

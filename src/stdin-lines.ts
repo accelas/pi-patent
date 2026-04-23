@@ -92,9 +92,10 @@ export function stdinExhausted(): boolean {
 	return stdinEnded && buffer.length === 0;
 }
 
-export function readLine(): Promise<string> {
+export function readLine(signal?: AbortSignal): Promise<string> {
 	start();
 	if (stdinEnded && buffer.length === 0) return Promise.resolve("");
+	if (signal?.aborted) return Promise.reject(new Error("aborted"));
 	// Resume reading now that a consumer is waiting (we pause when idle — see drain()).
 	if (!stdinEnded) {
 		try {
@@ -103,8 +104,21 @@ export function readLine(): Promise<string> {
 			/* resume unsupported (e.g. fake stdin in tests); ignore */
 		}
 	}
-	return new Promise<string>((resolve) => {
+	return new Promise<string>((resolve, reject) => {
 		waiters.push(resolve);
+		if (signal) {
+			const onAbort = () => {
+				// Find and drop our waiter, then reject.
+				const i = waiters.indexOf(resolve);
+				if (i >= 0) waiters.splice(i, 1);
+				reject(new Error("aborted"));
+			};
+			if (signal.aborted) {
+				onAbort();
+				return;
+			}
+			signal.addEventListener("abort", onAbort, { once: true });
+		}
 		drain();
 	});
 }
