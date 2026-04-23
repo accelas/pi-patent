@@ -1,0 +1,19 @@
+node_modules/
+dist/
+AppDir/
+*.AppImage
+appimagetool-*.AppImage
+.env
+.env.local
+
+# Session artifacts may contain sensitive inventor disclosures
+patents/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
