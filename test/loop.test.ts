@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ralphLoop } from "../src/loop.js";
+import { type LoopEvent, detectRegression, ralphLoop, scoreOf } from "../src/loop.js";
 import type { IntakeResult, ResolvedConfig, Verdict } from "../src/types.js";
 
 // --- fakes ---
@@ -200,5 +200,171 @@ describe("ralphLoop", () => {
 			session: fakeSession as any,
 		});
 		expect(result.status).toBe("passed");
+	});
+
+	describe("keep-best + regression tracking (v0.2)", () => {
+		it("scoreOf: passing-axis count dominates sum", () => {
+			// Use thresholds=3 for this test so the passing-count rank is meaningful.
+			const t: ResolvedConfig["thresholds"] = {
+				claim_breadth: 3,
+				claim_clarity: 3,
+				spec_support: 3,
+				basic_novelty: 3,
+				layman_quality: 3,
+			};
+			// Verdict A: all 5 axes at 3 (all passing threshold 3) → 5*100 + 15 = 515
+			const a: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 3, claim_clarity: 3, spec_support: 3, basic_novelty: 3, layman_quality: 3 },
+				issues: [],
+				summary: "",
+			};
+			// Verdict B: one axis at 5, rest at 2 (only 1 passing) → 1*100 + 13 = 113
+			const b: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 5, claim_clarity: 2, spec_support: 2, basic_novelty: 2, layman_quality: 2 },
+				issues: [],
+				summary: "",
+			};
+			expect(scoreOf(a, t)).toBeGreaterThan(scoreOf(b, t));
+			expect(scoreOf(a, t)).toBe(515);
+			expect(scoreOf(b, t)).toBe(113);
+		});
+
+		it("detectRegression: returns axes dropping by ≥2, ignores ≤1 (noise)", () => {
+			const best: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 5, claim_clarity: 4, spec_support: 4, basic_novelty: 3, layman_quality: 5 },
+				issues: [],
+				summary: "",
+			};
+			const cur: Verdict = {
+				verdict: "revise",
+				scores: {
+					claim_breadth: 3, // -2 → regressed
+					claim_clarity: 3, // -1 → noise, ignored
+					spec_support: 2, // -2 → regressed
+					basic_novelty: 3, // equal
+					layman_quality: 5, // equal
+				},
+				issues: [],
+				summary: "",
+			};
+			const r = detectRegression(cur, best);
+			expect(r).toEqual([
+				{ axis: "claim_breadth", from: 5, to: 3 },
+				{ axis: "spec_support", from: 4, to: 2 },
+			]);
+		});
+
+		it("keep-best: on max_iter, promotes the highest-scoring iteration", async () => {
+			// iter 1: 5 passing axes (all 4) — BEST
+			// iter 2: 3 passing axes, 2 below — worse
+			// iter 3: 4 passing axes, 1 below — middle
+			// With max_iter=3, draft.md should be iter 1's.
+			const verdicts: Verdict[] = [
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 4, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+					issues: [
+						{ axis: "claim_clarity", issue: "evaluator still says revise", suggestion: "x", priority: "high" },
+					] as unknown as Verdict["issues"],
+					summary: "iter1",
+				},
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 2, claim_clarity: 2, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+					issues: [],
+					summary: "iter2",
+				},
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 3, claim_clarity: 3, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+					issues: [],
+					summary: "iter3",
+				},
+			];
+			const drafterOutputs = [
+				"DRAFT-A\n---LAYMAN---\nLA-A",
+				"DRAFT-B\n---LAYMAN---\nLA-B",
+				"DRAFT-C\n---LAYMAN---\nLA-C",
+			];
+			let evalIdx = 0;
+
+			const writeFinal = vi.fn();
+			const session = {
+				dir: "/tmp/fake-session",
+				writeIteration: vi.fn(),
+				writeFinal,
+				writeAbort: vi.fn(),
+				writeError: vi.fn(),
+				writeMalformed: vi.fn(),
+				writeInput: vi.fn(),
+				updateUsage: vi.fn(),
+			};
+
+			const result = await ralphLoop({
+				disclosure: "d",
+				intake,
+				config: { ...baseCfg, max_iter: 3 },
+				makeDrafter: () => fakeDrafter(drafterOutputs),
+				makeEvaluator: () => {
+					const v = verdicts[evalIdx++] ?? verdicts[verdicts.length - 1];
+					if (!v) throw new Error("fake evaluator ran out of verdicts");
+					return fakeEvaluator(v);
+				},
+				// biome-ignore lint/suspicious/noExplicitAny: fake session writer
+				session: session as any,
+			});
+
+			expect(result.status).toBe("max_iter");
+			// Final written draft should be iter 1's (the best one), not iter 3's.
+			expect(writeFinal).toHaveBeenCalledTimes(1);
+			const finalCall = writeFinal.mock.calls[0]?.[0];
+			expect(finalCall.draft).toBe("DRAFT-A");
+			expect(finalCall.layman).toBe("LA-A");
+			expect(finalCall.verdict.summary).toBe("iter1");
+		});
+
+		it("LoopEvent iter_done carries regressed flag when axes dropped ≥2 from best-so-far", async () => {
+			const bestish: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 4, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+				issues: [],
+				summary: "iter1",
+			};
+			const worse: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 2, claim_clarity: 2, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+				issues: [],
+				summary: "iter2",
+			};
+			const events: LoopEvent[] = [];
+			const verdicts = [bestish, worse];
+			let evalIdx = 0;
+			await ralphLoop({
+				disclosure: "d",
+				intake,
+				config: { ...baseCfg, max_iter: 2 },
+				makeDrafter: () => fakeDrafter(["D1\n---LAYMAN---\nL1", "D2\n---LAYMAN---\nL2"]),
+				makeEvaluator: () => {
+					const v = verdicts[evalIdx++] ?? verdicts[verdicts.length - 1];
+					if (!v) throw new Error("fake evaluator ran out of verdicts");
+					return fakeEvaluator(v);
+				},
+				// biome-ignore lint/suspicious/noExplicitAny: fake session writer
+				session: fakeSession as any,
+				onProgress: (ev) => events.push(ev),
+			});
+			const iter2Done = events.find((e) => e.type === "iter_done" && e.iteration === 2);
+			expect(iter2Done).toBeDefined();
+			if (iter2Done && iter2Done.type === "iter_done") {
+				expect(iter2Done.regressed).toBe(true);
+				expect(iter2Done.regressedAxes).toEqual([
+					{ axis: "claim_breadth", from: 4, to: 2 },
+					{ axis: "claim_clarity", from: 4, to: 2 },
+				]);
+			}
+		});
 	});
 });

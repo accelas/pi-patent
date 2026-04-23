@@ -114,13 +114,20 @@ function formatScores(v: Verdict): string {
 	return AXIS_NAMES.map((a) => `${a}=${v.scores[a]}`).join(" ");
 }
 
+function formatRegression(ev: Extract<LoopEvent, { type: "iter_done" }>): string {
+	if (!ev.regressed || !ev.regressedAxes?.length) return "";
+	const parts = ev.regressedAxes.map((r) => `${r.axis} ${r.from}→${r.to}`).join(", ");
+	return `  ⚠ regressed from best-so-far: ${parts}`;
+}
+
 function makeProgressReporter(cfg: ResolvedConfig): (ev: LoopEvent) => void {
 	if (cfg.quiet) {
 		// Quiet mode: one compact line per iteration completion; skip start banner + focus hint.
 		return (ev: LoopEvent) => {
 			if (ev.type === "iter_done") {
 				const v = ev.verdict;
-				console.log(`iter ${ev.iteration}/${cfg.max_iter}: ${v.verdict} (${formatScores(v)})`);
+				const reg = ev.regressed ? " [regressed]" : "";
+				console.log(`iter ${ev.iteration}/${cfg.max_iter}: ${v.verdict}${reg} (${formatScores(v)})`);
 			}
 		};
 	}
@@ -133,6 +140,8 @@ function makeProgressReporter(cfg: ResolvedConfig): (ev: LoopEvent) => void {
 			if (v.verdict === "revise" && v.next_iteration_focus) {
 				console.log(`  focus: ${v.next_iteration_focus}`);
 			}
+			const reg = formatRegression(ev);
+			if (reg) console.log(reg);
 		}
 	};
 }

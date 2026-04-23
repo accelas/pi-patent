@@ -8,7 +8,15 @@ import { AXIS_NAMES } from "./types.js";
 
 export type LoopEvent =
 	| { type: "iter_start"; iteration: number }
-	| { type: "iter_done"; iteration: number; verdict: Verdict };
+	| {
+			type: "iter_done";
+			iteration: number;
+			verdict: Verdict;
+			/** True if this iteration's verdict is strictly worse than the best-so-far (post-iter-1). */
+			regressed?: boolean;
+			/** Axes that regressed >=2 points from best-so-far. Populated when `regressed` is true. */
+			regressedAxes?: Array<{ axis: (typeof AXIS_NAMES)[number]; from: number; to: number }>;
+	  };
 
 export type RalphResult =
 	| { status: "passed"; draft: string; layman: string; verdict: Verdict; iterations: number }
@@ -39,6 +47,36 @@ function enforcePassRule(v: Verdict, cfg: ResolvedConfig): Verdict {
 	return v;
 }
 
+/**
+ * Rank a verdict for keep-best-so-far: primary key is how many axes meet
+ * threshold (catching "previously-passing axis is now failing" regressions);
+ * secondary key is the sum of scores (tiebreaker).
+ *
+ * Exported for tests. Pure function.
+ */
+export function scoreOf(v: Verdict, thresholds: ResolvedConfig["thresholds"]): number {
+	const passing = AXIS_NAMES.filter((a) => v.scores[a] >= thresholds[a]).length;
+	const sum = AXIS_NAMES.reduce((s, a) => s + v.scores[a], 0);
+	return passing * 100 + sum;
+}
+
+/**
+ * Per-axis regression detection. An axis is "regressed" if it dropped by
+ * 2 or more points from the best-so-far (tolerates 1-point LLM scoring noise).
+ * Exported for tests.
+ */
+export function detectRegression(
+	current: Verdict,
+	best: Verdict,
+): Array<{ axis: (typeof AXIS_NAMES)[number]; from: number; to: number }> {
+	const out: Array<{ axis: (typeof AXIS_NAMES)[number]; from: number; to: number }> = [];
+	for (const a of AXIS_NAMES) {
+		const delta = best.scores[a] - current.scores[a];
+		if (delta >= 2) out.push({ axis: a, from: best.scores[a], to: current.scores[a] });
+	}
+	return out;
+}
+
 export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 	const drafter = opts.makeDrafter();
 	let currentEval: Agent | null = null;
@@ -49,6 +87,11 @@ export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 	opts.signal?.addEventListener("abort", abortBoth, { once: true });
 
 	let searchErrorStreak = 0;
+
+	// Keep-best-so-far: track the highest-scoring iteration. On max_iter, we
+	// promote this draft as the final output instead of blindly using the last.
+	// (Issue #1 comment: "Keep best-so-far + re-roll" — v0.2 ships the keep-best half.)
+	let best: { iter: number; draft: string; layman: string; verdict: Verdict } | null = null;
 
 	// Route through SessionWriter so the dump file inherits 0600 (C2 — disclosure material).
 	const dumpMalformed = (iter: number) => (raw: string) => opts.session.writeMalformed(iter, raw);
@@ -74,7 +117,31 @@ export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 			const verdict = enforcePassRule(raw, opts.config);
 
 			opts.session.writeIteration(i, { draft, layman, verdict });
-			opts.onProgress?.({ type: "iter_done", iteration: i, verdict });
+
+			// Relative-regression check (#4): compare against best-so-far and surface
+			// axes that dropped ≥2 points. Purely informational in v0.2 — the loop
+			// keeps running; keep-best selection handles the safety net.
+			let regressed = false;
+			let regressedAxes: ReturnType<typeof detectRegression> | undefined;
+			if (best) {
+				const ax = detectRegression(verdict, best.verdict);
+				if (ax.length > 0) {
+					regressed = true;
+					regressedAxes = ax;
+				}
+			}
+
+			opts.onProgress?.({
+				type: "iter_done",
+				iteration: i,
+				verdict,
+				...(regressed ? { regressed: true, ...(regressedAxes ? { regressedAxes } : {}) } : {}),
+			});
+
+			// Keep-best (#3): promote this iteration if strictly higher-scoring.
+			if (!best || scoreOf(verdict, opts.config.thresholds) > scoreOf(best.verdict, opts.config.thresholds)) {
+				best = { iter: i, draft, layman, verdict };
+			}
 
 			searchErrorStreak = searchBackendFailed ? searchErrorStreak + 1 : 0;
 			if (searchErrorStreak >= 3) {
@@ -84,12 +151,32 @@ export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 			}
 
 			if (verdict.verdict === "pass") {
+				// First pass always wins immediately — no keep-best rewrite needed.
 				opts.session.writeFinal({ draft, layman, verdict, iterations: i });
 				return { status: "passed", draft, layman, verdict, iterations: i };
 			}
 			if (i === opts.config.max_iter) {
-				opts.session.writeFinal({ draft, layman, verdict, iterations: i });
-				return { status: "max_iter", draft, layman, verdict, iterations: i };
+				// On max_iter, promote best-so-far (which may be an earlier iteration).
+				// `best` is guaranteed non-null here (at least iter 1 was added).
+				const finalPick = best ?? { iter: i, draft, layman, verdict };
+				opts.session.writeFinal({
+					draft: finalPick.draft,
+					layman: finalPick.layman,
+					verdict: finalPick.verdict,
+					iterations: i,
+				});
+				if (finalPick.iter !== i) {
+					console.log(
+						`[loop] Max iterations reached; promoting iter ${finalPick.iter}'s draft (scored higher than iter ${i}).`,
+					);
+				}
+				return {
+					status: "max_iter",
+					draft: finalPick.draft,
+					layman: finalPick.layman,
+					verdict: finalPick.verdict,
+					iterations: i,
+				};
 			}
 
 			await drafter.prompt(renderCritique(verdict, i));
