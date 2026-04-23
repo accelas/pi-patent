@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
-import { _resetForTests, readLine } from "../src/stdin-lines.js";
+import { _resetForTests, readLine, stdinExhausted } from "../src/stdin-lines.js";
 
 // Replace process.stdin with a controllable EventEmitter for tests.
 // The module attaches listeners at first readLine() call via start().
@@ -70,5 +70,28 @@ describe("readLine", () => {
 		s.emit("error", new Error("boom"));
 		expect(await p).toBe("");
 		expect(await readLine()).toBe("");
+	});
+});
+
+describe("stdinExhausted", () => {
+	it("is true when stdin is already ended and buffer is empty", () => {
+		const s = installFakeStdin();
+		s.readableEnded = true;
+		expect(stdinExhausted()).toBe(true);
+	});
+
+	it("is false while data remains buffered, true after final drain", async () => {
+		const s = installFakeStdin();
+		// start() is lazy — call readLine() first so listeners are attached,
+		// then push data + end.
+		const p1 = readLine();
+		s.emit("data", "line1\nleftover");
+		s.emit("end");
+		expect(await p1).toBe("line1");
+		// buffer still has 'leftover'; not yet exhausted
+		expect(stdinExhausted()).toBe(false);
+		expect(await readLine()).toBe("leftover");
+		// now buffer empty AND ended → exhausted
+		expect(stdinExhausted()).toBe(true);
 	});
 });

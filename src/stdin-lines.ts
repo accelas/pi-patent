@@ -81,6 +81,17 @@ function start(): void {
 	});
 }
 
+/**
+ * Returns true if stdin is closed/ended AND we have no more buffered data.
+ * Use this to detect "can't interactively prompt" situations (e.g., after
+ * readDisclosure has fully consumed a piped stdin) and fail fast instead of
+ * silently returning "" from readLine().
+ */
+export function stdinExhausted(): boolean {
+	start();
+	return stdinEnded && buffer.length === 0;
+}
+
 export function readLine(): Promise<string> {
 	start();
 	if (stdinEnded && buffer.length === 0) return Promise.resolve("");

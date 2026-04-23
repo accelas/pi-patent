@@ -52,6 +52,25 @@ describe("ensureCredentials", () => {
 		expect(() => ensureCredentials("amazon-bedrock", "drafter", stubStore as any)).toThrow(UserError);
 	});
 
+	it("oauth-or-key: accepts store-backed OAuth creds when no env vars set", () => {
+		// biome-ignore lint/performance/noDelete: test env cleanup
+		delete process.env.ANTHROPIC_OAUTH_TOKEN;
+		// biome-ignore lint/performance/noDelete: test env cleanup
+		delete process.env.ANTHROPIC_API_KEY;
+		stubStore._has.add("anthropic");
+		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).not.toThrow();
+	});
+
+	it("oauth-or-key: error mentions both env-var and login paths", () => {
+		// biome-ignore lint/performance/noDelete: test env cleanup
+		delete process.env.ANTHROPIC_OAUTH_TOKEN;
+		// biome-ignore lint/performance/noDelete: test env cleanup
+		delete process.env.ANTHROPIC_API_KEY;
+		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).toThrow(
+			/ANTHROPIC_API_KEY.*pi-patent login anthropic/,
+		);
+	});
+
 	it("oauth-or-key: OAuth env var wins", () => {
 		process.env.ANTHROPIC_OAUTH_TOKEN = "tok";
 		// biome-ignore lint/performance/noDelete: test env cleanup

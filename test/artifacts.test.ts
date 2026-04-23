@@ -46,6 +46,28 @@ describe("SessionWriter", () => {
 		expect(sj.status).toBe("running");
 	});
 
+	it("session dir is 0700 and artifact files are 0600 (confidentiality)", () => {
+		const sw = SessionWriter.create(tmp, "perm", { intake, config: cfg });
+		const dirMode = fs.statSync(sw.dir).mode & 0o777;
+		expect(dirMode).toBe(0o700);
+		const sessionJsonMode = fs.statSync(path.join(sw.dir, "session.json")).mode & 0o777;
+		expect(sessionJsonMode).toBe(0o600);
+
+		// writeIteration + writeInput + writeAbort all write private
+		const verdict: Verdict = {
+			verdict: "revise",
+			scores: { claim_breadth: 3, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+			issues: [],
+			summary: "",
+		};
+		sw.writeIteration(1, { draft: "D", layman: "L", verdict });
+		sw.writeInput("disclosure", intake, []);
+		sw.writeAbort(1, "sigint");
+		for (const f of ["iter-1-draft.md", "iter-1-layman.md", "iter-1-eval.json", "input.md", ".aborted"]) {
+			expect(fs.statSync(path.join(sw.dir, f)).mode & 0o777).toBe(0o600);
+		}
+	});
+
 	it("handles slug collision with -1 suffix", () => {
 		const a = SessionWriter.create(tmp, "sameslug", { intake, config: cfg });
 		const b = SessionWriter.create(tmp, "sameslug", { intake, config: cfg });

@@ -15,7 +15,7 @@ import { credentialStore } from "./oauth/store.js";
 import { loadPrompt } from "./prompts/load.js";
 import { promptVarsFor } from "./prompts/render.js";
 import { ensureCredentials } from "./providers.js";
-import { readLine, writePrompt } from "./stdin-lines.js";
+import { readLine, stdinExhausted, writePrompt } from "./stdin-lines.js";
 import { getSearchProvider } from "./tools/search/index.js";
 import type { ResolvedConfig, Verdict } from "./types.js";
 import { AXIS_NAMES } from "./types.js";
@@ -63,6 +63,16 @@ function preflight(cfg: ResolvedConfig): void {
 // ---------- Interactive prompt for ask_user ----------
 
 async function terminalPrompt(question: string, options?: string[]): Promise<string> {
+	// Refuse to silently fabricate answers when there is no interactive stdin.
+	// This happens if the user piped a disclosure AND the intake agent now wants
+	// a clarifying answer: stdin is already at EOF. Failing loud is safer than
+	// letting the CLI pick options[0] for scope/prior-art on a sensitive disclosure.
+	if (stdinExhausted()) {
+		throw new UserError(
+			"Intake agent wants a clarifying answer but stdin is not interactive (it was consumed or closed). " +
+				"Either run pi-patent in a real terminal, or use --input <file> with a disclosure rich enough that intake can finalize without questions.",
+		);
+	}
 	if (options?.length) {
 		const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
 		writePrompt(`\nQ: ${question}\n${lines}\n> `);
@@ -73,11 +83,21 @@ async function terminalPrompt(question: string, options?: string[]): Promise<str
 			if (chosen !== undefined) return chosen;
 		}
 		if (options.includes(answer)) return answer;
-		const fallback = options[0];
-		return answer || (fallback !== undefined ? fallback : "");
+		// Non-empty, non-matching answer: pass it through verbatim (the LLM may still accept it).
+		if (answer) return answer;
+		// Empty answer: refuse rather than defaulting silently.
+		throw new UserError(
+			`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
+		);
 	}
 	writePrompt(`\nQ: ${question}\n> `);
-	return (await readLine()).trim();
+	const answer = (await readLine()).trim();
+	if (!answer) {
+		throw new UserError(
+			`No answer given for intake question "${question.slice(0, 80)}…" — the CLI will not pick a default on your behalf.`,
+		);
+	}
+	return answer;
 }
 
 // ---------- Progress display ----------

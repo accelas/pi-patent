@@ -63,9 +63,13 @@ export function ensureCredentials(provider: string, role: string, credentialStor
 	if (meta.kind === "oauth-or-key") {
 		if (process.env[meta.oauthEnv]) return;
 		if (process.env[meta.envKey]) return;
+		// resolveApiKey() also reads store-backed OAuth creds for "oauth-or-key"
+		// providers (see src/oauth/resolve.ts). Accept them here so a successful
+		// `pi-patent login <cmd>` satisfies preflight without also requiring an env var.
+		if (credentialStore.has(meta.oauthProviderId)) return;
 		throw new UserError(
 			`No credentials for ${provider} (role: ${role}). ` +
-				`Either set $${meta.envKey} or run: pi-patent login ${meta.loginCmd}`,
+				`Either set $${meta.envKey}/$${meta.oauthEnv} or run: pi-patent login ${meta.loginCmd}`,
 		);
 	}
 	if (!process.env[meta.envKey]) {
