@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
+import { UserError } from "../src/errors.js";
 
 describe("loadConfig", () => {
 	it("returns defaults when no TOML + no overrides", () => {
@@ -58,5 +59,18 @@ model = "gpt-5.3-codex"
 	it("expands ~ in out_dir", () => {
 		const cfg = loadConfig({ tomlSource: `out_dir = "~/patents"`, cliArgs: {}, homeDir: "/home/t" });
 		expect(cfg.out_dir).toBe("/home/t/patents");
+	});
+
+	it("rejects rubric threshold out of range", () => {
+		expect(() => loadConfig({ tomlSource: "[rubric]\nbasic_novelty = 7", cliArgs: {} })).toThrow(UserError);
+	});
+
+	it("rejects non-integer default_axis_threshold", () => {
+		expect(() => loadConfig({ tomlSource: "default_axis_threshold = 4.5", cliArgs: {} })).toThrow(UserError);
+	});
+
+	it("rejects invalid thinking level", () => {
+		const toml = `[models.drafter]\nthinking = "meduim"`;
+		expect(() => loadConfig({ tomlSource: toml, cliArgs: {} })).toThrow(/Invalid thinking/);
 	});
 });
