@@ -6,6 +6,9 @@ appimagetool-*.AppImage
 .env
 .env.local
 
+# Local config (live config lives at ~/.config/pi-patent/config.toml)
+config.toml
+
 # Session artifacts may contain sensitive inventor disclosures
 patents/
 
