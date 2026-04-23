@@ -9,13 +9,13 @@
 	"files": ["dist", "README.md", "LICENSE"],
 	"engines": { "node": ">=20.6.0" },
 	"scripts": {
-		"clean":          "shx rm -rf dist AppDir pi-patent-*.AppImage",
-		"build":          "tsc -p tsconfig.build.json && shx mkdir -p dist/prompts && shx cp src/prompts/*.md dist/prompts/",
-		"build:binary":   "npm run build && bun build --compile ./dist/cli.js --outfile dist/pi-patent",
+		"clean": "shx rm -rf dist AppDir pi-patent-*.AppImage",
+		"build": "tsc -p tsconfig.build.json && shx mkdir -p dist/prompts && shx cp src/prompts/*.md dist/prompts/",
+		"build:binary": "npm run build && bun build --compile ./dist/cli.js --outfile dist/pi-patent",
 		"build:appimage": "npm run build:binary && scripts/build-appimage.sh",
-		"check":          "biome check --write --error-on-warnings . && tsc --noEmit",
-		"test":           "vitest --run",
-		"dev":            "tsc -p tsconfig.build.json --watch"
+		"check": "biome check --write --error-on-warnings . && tsc --noEmit",
+		"test": "vitest --run",
+		"dev": "tsc -p tsconfig.build.json --watch"
 	},
 	"dependencies": {
 		"@mariozechner/pi-ai": "^0.69.0",
