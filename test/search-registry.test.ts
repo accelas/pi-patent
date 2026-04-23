@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { UserError } from "../src/errors.js";
-import { SearchError } from "../src/tools/search/types.js";
 import { getSearchProvider } from "../src/tools/search/index.js";
+import { SearchError } from "../src/tools/search/types.js";
 
 describe("SearchError", () => {
 	it("carries kind and message", () => {

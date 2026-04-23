@@ -12,12 +12,14 @@ beforeEach(() => {
 });
 afterEach(() => {
 	globalThis.fetch = originalFetch;
+	// biome-ignore lint/performance/noDelete: test env cleanup
 	delete process.env.TAVILY_API_KEY;
 	mockFetch.mockReset();
 });
 
 describe("TavilyProvider.validate", () => {
 	it("throws UserError when key absent", () => {
+		// biome-ignore lint/performance/noDelete: test env cleanup
 		delete process.env.TAVILY_API_KEY;
 		expect(() => new TavilyProvider().validate()).toThrow(UserError);
 	});
