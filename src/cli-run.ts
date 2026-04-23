@@ -5,6 +5,7 @@ import { getModels } from "@mariozechner/pi-ai";
 import { makeDrafterAgent } from "./agents/drafter.js";
 import { makeEvaluatorAgent } from "./agents/evaluator.js";
 import { SessionWriter, slugFromDisclosure } from "./artifacts.js";
+import type { parseCliArgs } from "./cli.js";
 import type { CliArgs } from "./config.js";
 import { loadConfigFromDisk } from "./config.js";
 import { AbortError, IntakeRejected, LlmProtocolError, SearchBackendError, UserError } from "./errors.js";
@@ -12,13 +13,12 @@ import { defaultIntakeDeps, runIntake } from "./intake.js";
 import type { LoopEvent, RalphResult } from "./loop.js";
 import { ralphLoop } from "./loop.js";
 import { credentialStore } from "./oauth/store.js";
-import { ensureCredentials } from "./providers.js";
 import { loadPrompt } from "./prompts/load.js";
 import { promptVarsFor } from "./prompts/render.js";
+import { ensureCredentials } from "./providers.js";
 import { getSearchProvider } from "./tools/search/index.js";
 import type { ResolvedConfig, Verdict } from "./types.js";
 import { AXIS_NAMES } from "./types.js";
-import type { parseCliArgs } from "./cli.js";
 
 // ---------- Input reading ----------
 
@@ -74,13 +74,17 @@ function preflight(cfg: ResolvedConfig): void {
 async function terminalPrompt(question: string, options?: string[]): Promise<string> {
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		if (options && options.length) {
+		if (options?.length) {
 			const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
 			const answer = (await rl.question(`\nQ: ${question}\n${lines}\n> `)).trim();
 			const n = Number(answer);
-			if (!Number.isNaN(n) && n >= 1 && n <= options.length) return options[n - 1]!;
+			if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
+				const chosen = options[n - 1];
+				if (chosen !== undefined) return chosen;
+			}
 			if (options.includes(answer)) return answer;
-			return answer || options[0]!; // empty defaults to first option
+			const fallback = options[0];
+			return answer || (fallback !== undefined ? fallback : "");
 		}
 		return (await rl.question(`\nQ: ${question}\n> `)).trim();
 	} finally {
@@ -110,12 +114,38 @@ function makeProgressReporter(cfg: ResolvedConfig): (ev: LoopEvent) => void {
 
 // ---------- Error → exit code mapping ----------
 
-function exitCodeFor(err: unknown): number {
+export function exitCodeFor(err: unknown): number {
+	if (err instanceof AbortError) return 130;
 	if (err instanceof UserError) return 2;
-	if (err instanceof IntakeRejected) return 3;
-	if (err instanceof LlmProtocolError) return 4;
-	if (err instanceof SearchBackendError) return 5;
+	if (err instanceof IntakeRejected) return 2;
+	if (err instanceof LlmProtocolError) return 3;
+	if (err instanceof SearchBackendError) return 4;
 	return 1;
+}
+
+/**
+ * Shared error handler used by both the top-level `mainCli` catch and
+ * `runMain`'s internal catch. Writes a friendly message to stderr (or full
+ * stack for unexpected errors) and returns the matching exit code.
+ */
+export function exitFromError(err: unknown): number {
+	if (err instanceof AbortError) {
+		console.error("\nAborted.");
+		return 130;
+	}
+	const message = err instanceof Error ? err.message : String(err);
+	if (err instanceof UserError) {
+		console.error(`Error: ${message}`);
+	} else if (err instanceof IntakeRejected) {
+		console.error(`Intake rejected: ${message}`);
+	} else if (err instanceof LlmProtocolError) {
+		console.error(`LLM protocol error: ${message}`);
+	} else if (err instanceof SearchBackendError) {
+		console.error(`Search backend error: ${message}`);
+	} else {
+		console.error(err);
+	}
+	return exitCodeFor(err);
 }
 
 // ---------- Main ----------
@@ -132,14 +162,6 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	};
 	const cfg = loadConfigFromDisk(cliArgs);
 
-	// Read disclosure FIRST and validate length BEFORE preflight (spec §12.1.1).
-	const disclosure = (await readDisclosure(parsed.input)).trim();
-	if (disclosure.length < 20) {
-		throw new UserError(
-			`Disclosure too short (${disclosure.length} chars). Provide at least 20 characters describing the invention.`,
-		);
-	}
-
 	// Abort plumbing — SIGINT triggers a graceful abort.
 	const abortController = new AbortController();
 	const onSigint = () => {
@@ -152,6 +174,15 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	let lastCompletedIteration = 0;
 
 	try {
+		// Read disclosure FIRST and validate length BEFORE preflight (spec §12.1.1).
+		// Must live INSIDE the try so UserError for short input maps to exit code 2.
+		const disclosure = (await readDisclosure(parsed.input)).trim();
+		if (disclosure.length < 20) {
+			throw new UserError(
+				`Disclosure too short (${disclosure.length} chars). Provide at least 20 characters describing the invention.`,
+			);
+		}
+
 		preflight(cfg);
 
 		// Intake phase
@@ -206,7 +237,8 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 			return 130;
 		}
 
-		// Categorize and persist the error before exit-code dispatch.
+		// Categorize and persist the error before delegating to the shared
+		// stderr + exit-code handler.
 		let category: "user" | "llm_protocol" | "search_backend" | "unexpected";
 		if (err instanceof UserError || err instanceof IntakeRejected) category = "user";
 		else if (err instanceof LlmProtocolError) category = "llm_protocol";
@@ -216,19 +248,7 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 		const message = err instanceof Error ? err.message : String(err);
 		session?.writeError({ category, message, lastCompletedIteration });
 
-		if (err instanceof UserError) {
-			console.error(`Error: ${message}`);
-		} else if (err instanceof IntakeRejected) {
-			console.error(`Intake rejected: ${message}`);
-		} else if (err instanceof LlmProtocolError) {
-			console.error(`LLM protocol error: ${message}`);
-		} else if (err instanceof SearchBackendError) {
-			console.error(`Search backend error: ${message}`);
-		} else {
-			console.error(err);
-		}
-
-		return exitCodeFor(err);
+		return exitFromError(err);
 	} finally {
 		process.off("SIGINT", onSigint);
 	}

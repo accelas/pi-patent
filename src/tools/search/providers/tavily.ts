@@ -1,5 +1,11 @@
 import { UserError } from "../../../errors.js";
-import { SearchError, type SearchErrorKind, type SearchOptions, type SearchProvider, type SearchResult } from "../types.js";
+import {
+	SearchError,
+	type SearchErrorKind,
+	type SearchOptions,
+	type SearchProvider,
+	type SearchResult,
+} from "../types.js";
 
 interface TavilyResult {
 	title: string;

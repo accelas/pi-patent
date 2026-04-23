@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { exitFromError } from "./cli-run.js";
 import { UserError } from "./errors.js";
 import { handleLogin } from "./oauth/login.js";
 
@@ -19,7 +20,7 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 	if (argv[0] === "login") {
 		const target = argv[1];
 		if (target !== "codex" && target !== "anthropic") {
-			throw new UserError(`Usage: pi-patent login <codex|anthropic>`);
+			throw new UserError("Usage: pi-patent login <codex|anthropic>");
 		}
 		return { subcommand: "login", loginTarget: target };
 	}
@@ -51,21 +52,39 @@ export function parseCliArgs(argv: string[]): ParsedArgs {
 }
 
 export async function mainCli(argv: string[]): Promise<number> {
-	const parsed = parseCliArgs(argv);
+	let parsed: ParsedArgs;
+	try {
+		parsed = parseCliArgs(argv);
+	} catch (err) {
+		// Node's parseArgs throws errors with a `code` property; map unknown
+		// options to a friendly UserError so they exit with code 2 instead of 1.
+		if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
+			return exitFromError(new UserError(`${err.message} (try --help)`));
+		}
+		return exitFromError(err);
+	}
 
 	if (parsed.help) {
 		console.log(HELP_TEXT);
 		return 0;
 	}
 
-	if (parsed.subcommand === "login") {
-		await handleLogin(parsed.loginTarget!);
-		return 0;
-	}
+	try {
+		if (parsed.subcommand === "login") {
+			const target = parsed.loginTarget;
+			if (target !== "codex" && target !== "anthropic") {
+				throw new UserError("Usage: pi-patent login <codex|anthropic>");
+			}
+			await handleLogin(target);
+			return 0;
+		}
 
-	// Main run implemented in cli-run.ts.
-	const { runMain } = await import("./cli-run.js");
-	return runMain(parsed);
+		// Main run implemented in cli-run.ts.
+		const { runMain } = await import("./cli-run.js");
+		return await runMain(parsed);
+	} catch (err) {
+		return exitFromError(err);
+	}
 }
 
 const HELP_TEXT = `pi-patent — iterate a disclosure into a utility patent draft.
@@ -95,9 +114,6 @@ Required env: ANTHROPIC_API_KEY (or run 'pi-patent login anthropic'); TAVILY_API
 if (import.meta.url === `file://${process.argv[1]}`) {
 	mainCli(process.argv.slice(2)).then(
 		(code) => process.exit(code),
-		(err) => {
-			console.error(err);
-			process.exit(1);
-		},
+		(err) => process.exit(exitFromError(err)),
 	);
 }
