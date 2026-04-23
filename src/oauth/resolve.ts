@@ -3,7 +3,9 @@ import { type OAuthProviderId, getOAuthApiKey as realGetOAuthApiKey } from "@mar
 import { PROVIDER_META } from "../providers.js";
 import { type CredentialStore, credentialStore as defaultStore } from "./store.js";
 
-const OAUTH_PROVIDERS = new Set<OAuthProviderId>(["openai-codex", "anthropic"]);
+// Anthropic removed from OAuth-capable set 2026-04: prohibited by Anthropic's
+// ToS for programmatic access. Use $ANTHROPIC_API_KEY.
+const OAUTH_PROVIDERS = new Set<OAuthProviderId>(["openai-codex"]);
 
 export interface ResolveDeps {
 	store?: CredentialStore;
@@ -17,10 +19,6 @@ export function makeResolveApiKey(deps: ResolveDeps = {}) {
 	const getEnvApiKey = deps.getEnvApiKey ?? realGetEnvApiKey;
 
 	return async function resolveApiKey(provider: string): Promise<string | undefined> {
-		if (provider === "anthropic" && process.env.ANTHROPIC_OAUTH_TOKEN) {
-			return process.env.ANTHROPIC_OAUTH_TOKEN;
-		}
-
 		if (OAUTH_PROVIDERS.has(provider as OAuthProviderId)) {
 			const oauthId = provider as OAuthProviderId;
 			const creds = store.load(oauthId);

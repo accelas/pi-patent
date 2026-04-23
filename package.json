@@ -1,13 +1,21 @@
 {
 	"name": "pi-patent",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "CLI that iterates inventor disclosures into utility patent drafts via a ralph loop.",
 	"type": "module",
-	"bin": { "pi-patent": "dist/cli.js" },
+	"bin": {
+		"pi-patent": "dist/cli.js"
+	},
 	"main": "./dist/cli.js",
-	"exports": { ".": { "import": "./dist/cli.js" } },
+	"exports": {
+		".": {
+			"import": "./dist/cli.js"
+		}
+	},
 	"files": ["dist", "README.md", "LICENSE"],
-	"engines": { "node": ">=20.6.0" },
+	"engines": {
+		"node": ">=20.6.0"
+	},
 	"scripts": {
 		"clean": "shx rm -rf dist AppDir pi-patent-*.AppImage",
 		"build": "tsc -p tsconfig.build.json && shx mkdir -p dist/prompts && shx cp src/prompts/*.md dist/prompts/",

@@ -3,12 +3,15 @@ import { UserError } from "../errors.js";
 import { readLine, writePrompt } from "../stdin-lines.js";
 import { credentialStore } from "./store.js";
 
-const SUBCMD_TO_PROVIDER: Record<"codex" | "anthropic", OAuthProviderId> = {
+// Anthropic OAuth support removed 2026-04: prohibited by Anthropic's ToS for
+// programmatic access. Use $ANTHROPIC_API_KEY instead. Codex remains supported.
+const SUBCMD_TO_PROVIDER: Record<"codex", OAuthProviderId> = {
 	codex: "openai-codex",
-	anthropic: "anthropic",
 };
 
-export async function handleLogin(subcmd: "codex" | "anthropic"): Promise<void> {
+export type LoginSubcommand = keyof typeof SUBCMD_TO_PROVIDER;
+
+export async function handleLogin(subcmd: LoginSubcommand): Promise<void> {
 	const providerId = SUBCMD_TO_PROVIDER[subcmd];
 	const provider = getOAuthProvider(providerId);
 	if (!provider) throw new UserError(`OAuth provider not registered: ${providerId}`);

@@ -7,26 +7,15 @@ interface ApiKeyMeta {
 }
 interface OauthMeta {
 	kind: "oauth";
-	loginCmd: "codex" | "anthropic";
+	loginCmd: "codex";
 	oauthProviderId: OAuthProviderId;
 }
-interface OauthOrKeyMeta {
-	kind: "oauth-or-key";
-	envKey: string;
-	oauthEnv: string;
-	loginCmd: "codex" | "anthropic";
-	oauthProviderId: OAuthProviderId;
-}
-type ProviderMeta = ApiKeyMeta | OauthMeta | OauthOrKeyMeta;
+type ProviderMeta = ApiKeyMeta | OauthMeta;
 
 export const PROVIDER_META = {
-	anthropic: {
-		kind: "oauth-or-key",
-		envKey: "ANTHROPIC_API_KEY",
-		oauthEnv: "ANTHROPIC_OAUTH_TOKEN",
-		loginCmd: "anthropic",
-		oauthProviderId: "anthropic",
-	},
+	// Anthropic: API key only. OAuth login was previously supported but is
+	// prohibited by Anthropic's ToS for programmatic access (as of 2026-04).
+	anthropic: { kind: "api-key", envKey: "ANTHROPIC_API_KEY" },
 	openai: { kind: "api-key", envKey: "OPENAI_API_KEY" },
 	"openai-codex": {
 		kind: "oauth",
@@ -60,18 +49,7 @@ export function ensureCredentials(provider: string, role: string, credentialStor
 		}
 		return;
 	}
-	if (meta.kind === "oauth-or-key") {
-		if (process.env[meta.oauthEnv]) return;
-		if (process.env[meta.envKey]) return;
-		// resolveApiKey() also reads store-backed OAuth creds for "oauth-or-key"
-		// providers (see src/oauth/resolve.ts). Accept them here so a successful
-		// `pi-patent login <cmd>` satisfies preflight without also requiring an env var.
-		if (credentialStore.has(meta.oauthProviderId)) return;
-		throw new UserError(
-			`No credentials for ${provider} (role: ${role}). ` +
-				`Either set $${meta.envKey}/$${meta.oauthEnv} or run: pi-patent login ${meta.loginCmd}`,
-		);
-	}
+	// kind === "api-key"
 	if (!process.env[meta.envKey]) {
 		throw new UserError(`$${meta.envKey} not set (required by ${role} via ${provider}).`);
 	}

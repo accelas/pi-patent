@@ -6,7 +6,7 @@ import { handleLogin } from "./oauth/login.js";
 
 interface ParsedArgs {
 	subcommand?: "login";
-	loginTarget?: "codex" | "anthropic";
+	loginTarget?: "codex";
 	input?: string;
 	maxIter?: number;
 	model?: string;
@@ -19,8 +19,10 @@ interface ParsedArgs {
 export function parseCliArgs(argv: string[]): ParsedArgs {
 	if (argv[0] === "login") {
 		const target = argv[1];
-		if (target !== "codex" && target !== "anthropic") {
-			throw new UserError("Usage: pi-patent login <codex|anthropic>");
+		if (target !== "codex") {
+			// Anthropic OAuth subcommand removed 2026-04 (ToS prohibits programmatic OAuth).
+			// Set $ANTHROPIC_API_KEY for Anthropic access.
+			throw new UserError("Usage: pi-patent login codex");
 		}
 		return { subcommand: "login", loginTarget: target };
 	}
@@ -79,8 +81,8 @@ export async function mainCli(argv: string[]): Promise<number> {
 	try {
 		if (parsed.subcommand === "login") {
 			const target = parsed.loginTarget;
-			if (target !== "codex" && target !== "anthropic") {
-				throw new UserError("Usage: pi-patent login <codex|anthropic>");
+			if (target !== "codex") {
+				throw new UserError("Usage: pi-patent login codex");
 			}
 			await handleLogin(target);
 			return 0;
@@ -102,7 +104,7 @@ USAGE
   cat disclosure.md | pi-patent          piped stdin
 
   pi-patent login codex                  ChatGPT OAuth for Codex models
-  pi-patent login anthropic              Anthropic OAuth
+                                         (Anthropic OAuth removed — use $ANTHROPIC_API_KEY)
 
 OPTIONS
   --input <file>       disclosure file (markdown)
@@ -114,7 +116,7 @@ OPTIONS
   -h, --help           this message
 
 Config file: $XDG_CONFIG_HOME/pi-patent/config.toml (optional)
-Required env: ANTHROPIC_API_KEY (or run 'pi-patent login anthropic'); TAVILY_API_KEY if web_search enabled.
+Required env: $ANTHROPIC_API_KEY for Anthropic, $OPENROUTER_API_KEY for OpenRouter, etc.; $TAVILY_API_KEY if web_search enabled.
 `;
 
 // Entry point

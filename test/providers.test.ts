@@ -52,43 +52,21 @@ describe("ensureCredentials", () => {
 		expect(() => ensureCredentials("amazon-bedrock", "drafter", stubStore as any)).toThrow(UserError);
 	});
 
-	it("oauth-or-key: accepts store-backed OAuth creds when no env vars set", () => {
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_OAUTH_TOKEN;
+	it("anthropic: api-key — requires $ANTHROPIC_API_KEY (OAuth removed 2026-04 per vendor ToS)", () => {
 		// biome-ignore lint/performance/noDelete: test env cleanup
 		delete process.env.ANTHROPIC_API_KEY;
-		stubStore._has.add("anthropic");
-		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).not.toThrow();
-	});
-
-	it("oauth-or-key: error mentions both env-var and login paths", () => {
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_OAUTH_TOKEN;
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_API_KEY;
-		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).toThrow(
-			/ANTHROPIC_API_KEY.*pi-patent login anthropic/,
-		);
-	});
-
-	it("oauth-or-key: OAuth env var wins", () => {
-		process.env.ANTHROPIC_OAUTH_TOKEN = "tok";
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_API_KEY;
-		// biome-ignore lint/suspicious/noExplicitAny: stub cast for test
-		expect(() => ensureCredentials("anthropic", "drafter", stubStore as any)).not.toThrow();
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_OAUTH_TOKEN;
-	});
-
-	it("oauth-or-key: falls back to env key", () => {
-		// biome-ignore lint/performance/noDelete: test env cleanup
-		delete process.env.ANTHROPIC_OAUTH_TOKEN;
+		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).toThrow(/ANTHROPIC_API_KEY/);
 		process.env.ANTHROPIC_API_KEY = "k";
-		// biome-ignore lint/suspicious/noExplicitAny: stub cast for test
-		expect(() => ensureCredentials("anthropic", "drafter", stubStore as any)).not.toThrow();
+		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).not.toThrow();
 		// biome-ignore lint/performance/noDelete: test env cleanup
 		delete process.env.ANTHROPIC_API_KEY;
+	});
+
+	it("anthropic: store-backed creds do NOT satisfy preflight (OAuth path gone)", () => {
+		// biome-ignore lint/performance/noDelete: test env cleanup
+		delete process.env.ANTHROPIC_API_KEY;
+		stubStore._has.add("anthropic"); // leftover from a pre-0.1.2 install
+		expect(() => ensureCredentials("anthropic", "drafter", stubStore as never)).toThrow(/ANTHROPIC_API_KEY/);
 	});
 
 	it("oauth: requires credentialStore entry", () => {

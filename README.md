@@ -47,8 +47,9 @@ export ANTHROPIC_API_KEY=sk-...
 export TAVILY_API_KEY=tvly-...             # optional, only if web_search enabled
 
 # OR use OAuth
-pi-patent login codex                       # GPT-5 Codex models
-pi-patent login anthropic                   # Anthropic OAuth
+pi-patent login codex                       # GPT-5 Codex models (ChatGPT OAuth)
+# (Anthropic OAuth removed — Anthropic's ToS prohibits programmatic OAuth.
+#  Use $ANTHROPIC_API_KEY.)
 ```
 
 OAuth tokens are cached at `${XDG_DATA_HOME:-~/.local/share}/pi-patent/oauth/`.

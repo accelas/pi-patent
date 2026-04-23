@@ -19,8 +19,6 @@ beforeEach(() => {
 });
 afterEach(() => {
 	// biome-ignore lint/performance/noDelete: test env cleanup
-	delete process.env.ANTHROPIC_OAUTH_TOKEN;
-	// biome-ignore lint/performance/noDelete: test env cleanup
 	delete process.env.ANTHROPIC_API_KEY;
 	// biome-ignore lint/performance/noDelete: test env cleanup
 	delete process.env.OPENAI_API_KEY;
@@ -29,11 +27,14 @@ afterEach(() => {
 });
 
 describe("resolveApiKey", () => {
-	it("anthropic: ANTHROPIC_OAUTH_TOKEN wins if set", async () => {
-		process.env.ANTHROPIC_OAUTH_TOKEN = "oauth-tok";
+	it("anthropic: uses $ANTHROPIC_API_KEY via pi-ai getEnvApiKey (no OAuth path)", async () => {
 		process.env.ANTHROPIC_API_KEY = "api-key";
-		const resolve = makeResolveApiKey({ store: fakeStore as never, getOAuthApiKey: vi.fn() });
-		expect(await resolve("anthropic")).toBe("oauth-tok");
+		const resolve = makeResolveApiKey({
+			store: fakeStore as never,
+			getOAuthApiKey: vi.fn(),
+			getEnvApiKey: (p: string) => (p === "anthropic" ? "api-key" : undefined),
+		});
+		expect(await resolve("anthropic")).toBe("api-key");
 	});
 
 	it("openai-codex: uses getOAuthApiKey and persists refresh", async () => {
