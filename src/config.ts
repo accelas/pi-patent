@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { UserError } from "./errors.js";
+import { credentialStore } from "./oauth/store.js";
 import { AXIS_NAMES, type AxisName, type ResolvedConfig, type RoleName, type ThinkingLevel } from "./types.js";
 
 const VALID_THINKING: ReadonlySet<ThinkingLevel> = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -117,6 +118,30 @@ function resolveRoleModel(
 	};
 }
 
+/**
+ * Auto-default synthesis: if the user has no config file, no Anthropic credential
+ * (neither env var nor OAuth token), but HAS completed `pi-patent login codex`,
+ * treat the Codex path as their intended provider. Injects a synthetic TOML so
+ * the rest of the resolution pipeline is unchanged.
+ *
+ * Returns the synthetic TOML string, or null if no auto-default applies.
+ *
+ * Exported for tests. Pure aside from process.env reads.
+ */
+export function maybeCodexAutoDefault(opts: {
+	tomlExists: boolean;
+	hasAnthropicEnv: boolean;
+	hasCodexLogin: boolean;
+	/** Override the default codex model if needed (tests/future config) */
+	codexModel?: string;
+}): string | null {
+	if (opts.tomlExists) return null;
+	if (opts.hasAnthropicEnv) return null;
+	if (!opts.hasCodexLogin) return null;
+	const model = opts.codexModel ?? "gpt-5.3-codex";
+	return `provider = "openai-codex"\nmodel = "${model}"\n`;
+}
+
 export function loadConfigFromDisk(cliArgs: CliArgs): ResolvedConfig {
 	const home = os.homedir();
 	const xdg = process.env.XDG_CONFIG_HOME ?? path.join(home, ".config");
@@ -126,6 +151,23 @@ export function loadConfigFromDisk(cliArgs: CliArgs): ResolvedConfig {
 		tomlSource = fs.readFileSync(file, "utf-8");
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+	}
+
+	// Auto-default to Codex (fix issue #3.1 — login codex should "just work").
+	if (tomlSource === null) {
+		const hasAnthropicEnv = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_OAUTH_TOKEN);
+		const hasCodexLogin = credentialStore.has("openai-codex");
+		const synthetic = maybeCodexAutoDefault({
+			tomlExists: false,
+			hasAnthropicEnv,
+			hasCodexLogin,
+		});
+		if (synthetic !== null) {
+			console.log(
+				"[config] no config.toml + no ANTHROPIC_API_KEY + codex OAuth credentials found → defaulting to provider=openai-codex.",
+			);
+			tomlSource = synthetic;
+		}
 	}
 	return loadConfig({ tomlSource, cliArgs });
 }

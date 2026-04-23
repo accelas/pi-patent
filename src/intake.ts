@@ -1,8 +1,9 @@
 import type { Agent, AgentMessage, BeforeToolCallContext, BeforeToolCallResult } from "@mariozechner/pi-agent-core";
 import { makeIntakeAgent } from "./agents/intake.js";
 import { IntakeRejected, LlmProtocolError } from "./errors.js";
+import { tryParseAssistantAsSchema } from "./schema-fallback.js";
 import { type PromptUserFn, makeAskUserTool } from "./tools/agent-tools.js";
-import type { IntakeResult, ResolvedConfig } from "./types.js";
+import { type IntakeResult, IntakeResultSchema, type ResolvedConfig } from "./types.js";
 
 const ASK_USER_CAP = 6;
 
@@ -71,6 +72,17 @@ export async function runIntake(
 		await agent.prompt(disclosure);
 	} finally {
 		unsubscribe();
+	}
+
+	// Issue #3.2 fallback: if finalize_intake never fired but the assistant
+	// emitted a schema-valid JSON IntakeResult directly (observed with GPT-5
+	// Codex variants), accept that instead of failing the run.
+	if (!intakeResult) {
+		const parsed = tryParseAssistantAsSchema<IntakeResult>(agent, IntakeResultSchema);
+		if (parsed) {
+			console.log("[intake] finalize_intake not called; parsed assistant message as IntakeResult (schema fallback).");
+			intakeResult = parsed;
+		}
 	}
 
 	if (!intakeResult) {

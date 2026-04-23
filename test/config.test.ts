@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, maybeCodexAutoDefault } from "../src/config.js";
 import { UserError } from "../src/errors.js";
 
 describe("loadConfig", () => {
@@ -83,5 +83,72 @@ model = "gpt-5.3-codex"
 	it("rejects zero/negative max_iter from CLI", () => {
 		expect(() => loadConfig({ tomlSource: null, cliArgs: { maxIter: 0 } })).toThrow(/positive integer/);
 		expect(() => loadConfig({ tomlSource: null, cliArgs: { maxIter: -3 } })).toThrow(/positive integer/);
+	});
+});
+
+describe("maybeCodexAutoDefault (issue #3.1)", () => {
+	it("returns synthetic TOML when no config + no anthropic env + codex login exists", () => {
+		const synth = maybeCodexAutoDefault({
+			tomlExists: false,
+			hasAnthropicEnv: false,
+			hasCodexLogin: true,
+		});
+		expect(synth).not.toBeNull();
+		expect(synth).toContain('provider = "openai-codex"');
+		expect(synth).toContain('model = "gpt-5.3-codex"');
+	});
+
+	it("returns null when a config file already exists (user has explicit preference)", () => {
+		expect(
+			maybeCodexAutoDefault({
+				tomlExists: true,
+				hasAnthropicEnv: false,
+				hasCodexLogin: true,
+			}),
+		).toBeNull();
+	});
+
+	it("returns null when user has an anthropic credential (no ambiguity)", () => {
+		expect(
+			maybeCodexAutoDefault({
+				tomlExists: false,
+				hasAnthropicEnv: true,
+				hasCodexLogin: true,
+			}),
+		).toBeNull();
+	});
+
+	it("returns null when no codex login (nothing to default to)", () => {
+		expect(
+			maybeCodexAutoDefault({
+				tomlExists: false,
+				hasAnthropicEnv: false,
+				hasCodexLogin: false,
+			}),
+		).toBeNull();
+	});
+
+	it("accepts a custom codex model override", () => {
+		const synth = maybeCodexAutoDefault({
+			tomlExists: false,
+			hasAnthropicEnv: false,
+			hasCodexLogin: true,
+			codexModel: "gpt-5.2-codex",
+		});
+		expect(synth).toContain('model = "gpt-5.2-codex"');
+	});
+
+	it("synthetic TOML is valid input to loadConfig", () => {
+		const synth = maybeCodexAutoDefault({
+			tomlExists: false,
+			hasAnthropicEnv: false,
+			hasCodexLogin: true,
+		});
+		expect(synth).not.toBeNull();
+		const cfg = loadConfig({ tomlSource: synth, cliArgs: {} });
+		expect(cfg.models.drafter.provider).toBe("openai-codex");
+		expect(cfg.models.drafter.model).toBe("gpt-5.3-codex");
+		expect(cfg.models.intake.provider).toBe("openai-codex");
+		expect(cfg.models.evaluator.provider).toBe("openai-codex");
 	});
 });

@@ -1,7 +1,8 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { LlmProtocolError } from "./errors.js";
 import { renderEvalInput } from "./prompts/render.js";
-import type { IntakeResult, Verdict } from "./types.js";
+import { tryParseAssistantAsSchema } from "./schema-fallback.js";
+import { type IntakeResult, type Verdict, VerdictSchema } from "./types.js";
 
 export function lastAssistantText(agent: Agent): string {
 	for (let i = agent.state.messages.length - 1; i >= 0; i--) {
@@ -89,6 +90,17 @@ export async function runEvaluation(
 		await agent.prompt(renderEvalInput(disclosure, intake, draft, layman));
 	} finally {
 		unsubscribe();
+	}
+
+	// Issue #3.2 fallback: if submit_verdict never fired but the assistant emitted
+	// a schema-valid JSON Verdict directly (observed with GPT-5 Codex variants),
+	// accept that instead of failing the run.
+	if (!verdict) {
+		const parsed = tryParseAssistantAsSchema<Verdict>(agent, VerdictSchema);
+		if (parsed) {
+			console.log("[eval] submit_verdict not called; parsed assistant message as Verdict (schema fallback).");
+			verdict = parsed;
+		}
 	}
 
 	if (!verdict) throw new LlmProtocolError("Evaluator did not call submit_verdict.");
