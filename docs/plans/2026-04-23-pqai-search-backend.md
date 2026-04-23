@@ -1,5 +1,22 @@
 # PQAI Patent-Search Backend Implementation Plan
 
+> **⚠️ PAUSED 2026-04-23 — DO NOT EXECUTE AS-IS**
+>
+> Task 1's live probe found that `api.projectpq.ai` now requires a
+> `?token=` query parameter, obtained via either a **paid subscription**
+> or by **emailing PQAI for an academic/non-commercial token**. The plan's
+> "Free, no auth" premise (README copy, `validate() is a no-op`, absence
+> of `$PQAI_TOKEN` wiring) is stale.
+>
+> See issue [#2](https://github.com/accelas/pi-patent/issues/2) for the
+> revised options (subscribe to PQAI, pivot to EPO OPS, Google Patents
+> BigQuery, or skip). Do not execute this plan until one of those paths
+> is chosen and the plan is updated accordingly.
+>
+> Retained in-repo for historical context and because Tasks 3–7 remain
+> structurally correct (only auth + validate() change if PQAI route is
+> chosen with a paid token).
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add PQAI (projectpq.ai) as a swap-in `SearchProvider` alongside the existing Tavily provider, so users can point pi-patent's `basic_novelty` axis at a free, semantic, patent-specific prior-art backend instead of a general web search.
