@@ -139,6 +139,15 @@ export class SessionWriter {
 		this.flush();
 	}
 
+	/**
+	 * Persist a malformed drafter output (missing `---LAYMAN---` after retry) so
+	 * the user can diagnose. Writes with mode 0600 — draft body is as sensitive
+	 * as a well-formed draft.
+	 */
+	writeMalformed(iter: number, raw: string): void {
+		writePrivate(path.join(this.dir, `malformed-iter-${iter}.txt`), raw);
+	}
+
 	writeAbort(lastIter: number, reason: "sigint" | "signal"): void {
 		this.data.status = "aborted";
 		this.data.ended_at = new Date().toISOString();

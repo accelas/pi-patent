@@ -105,18 +105,22 @@ export function readLine(signal?: AbortSignal): Promise<string> {
 		}
 	}
 	return new Promise<string>((resolve, reject) => {
-		waiters.push(resolve);
+		let onAbort: (() => void) | undefined;
+		const detach = () => {
+			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+		};
+		// Wrap resolve so the abort listener is detached on successful settle.
+		const wrappedResolve = (line: string) => {
+			detach();
+			resolve(line);
+		};
+		waiters.push(wrappedResolve);
 		if (signal) {
-			const onAbort = () => {
-				// Find and drop our waiter, then reject.
-				const i = waiters.indexOf(resolve);
+			onAbort = () => {
+				const i = waiters.indexOf(wrappedResolve);
 				if (i >= 0) waiters.splice(i, 1);
 				reject(new Error("aborted"));
 			};
-			if (signal.aborted) {
-				onAbort();
-				return;
-			}
 			signal.addEventListener("abort", onAbort, { once: true });
 		}
 		drain();

@@ -63,7 +63,15 @@ describe("SessionWriter", () => {
 		sw.writeIteration(1, { draft: "D", layman: "L", verdict });
 		sw.writeInput("disclosure", intake, []);
 		sw.writeAbort(1, "sigint");
-		for (const f of ["iter-1-draft.md", "iter-1-layman.md", "iter-1-eval.json", "input.md", ".aborted"]) {
+		sw.writeMalformed(2, "raw bad output");
+		for (const f of [
+			"iter-1-draft.md",
+			"iter-1-layman.md",
+			"iter-1-eval.json",
+			"input.md",
+			".aborted",
+			"malformed-iter-2.txt",
+		]) {
 			expect(fs.statSync(path.join(sw.dir, f)).mode & 0o777).toBe(0o600);
 		}
 	});

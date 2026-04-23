@@ -33,7 +33,8 @@ export class TavilyProvider implements SearchProvider {
 		};
 		if (opts.maxResults !== undefined) body.max_results = opts.maxResults;
 
-		// Cap Tavily fetch at 30s so a stuck request can't hang the evaluator.
+		// Cap the entire Tavily round-trip (headers + body) at 30s so a server that
+		// returns headers and then stalls the body can't hang the evaluator.
 		// Honor caller-supplied AbortSignal too (for SIGINT propagation).
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), 30_000);
@@ -42,47 +43,55 @@ export class TavilyProvider implements SearchProvider {
 			if (opts.signal.aborted) controller.abort();
 			else opts.signal.addEventListener("abort", onUpstream, { once: true });
 		}
+		const isAbort = (err: unknown) => {
+			const msg = (err as Error).message ?? "";
+			return (err as { name?: string })?.name === "AbortError" || /abort/i.test(msg);
+		};
 
-		let response: Response;
 		try {
-			response = await fetch("https://api.tavily.com/search", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-				signal: controller.signal,
-			});
-		} catch (err) {
-			const msg = (err as Error).message;
-			const kind = msg.toLowerCase().includes("abort") ? "backend" : "backend";
-			throw new SearchError(kind, `Tavily network error: ${msg}`);
+			let response: Response;
+			try {
+				response = await fetch("https://api.tavily.com/search", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+					signal: controller.signal,
+				});
+			} catch (err) {
+				throw new SearchError("backend", `Tavily network error: ${(err as Error).message}`);
+			}
+
+			if (!response.ok) {
+				const text = await response.text().catch(() => "");
+				throw new SearchError(mapStatus(response.status), `Tavily ${response.status}: ${text.slice(0, 200)}`);
+			}
+
+			let data: unknown;
+			try {
+				data = await response.json();
+			} catch (err) {
+				// If the body read was aborted by our timeout, classify as backend, not unknown.
+				if (isAbort(err)) {
+					throw new SearchError("backend", "Tavily body read timed out or was aborted.");
+				}
+				throw new SearchError("unknown", `Tavily returned non-JSON body: ${(err as Error).message}`);
+			}
+			if (!isTavilyBody(data)) {
+				throw new SearchError(
+					"unknown",
+					"Tavily response has unexpected shape (missing 'results' array of {title,url,content,score}).",
+				);
+			}
+			return data.results.map((r) => ({
+				title: r.title,
+				url: r.url,
+				snippet: r.content,
+				score: r.score,
+			}));
 		} finally {
 			clearTimeout(timer);
 			opts.signal?.removeEventListener("abort", onUpstream);
 		}
-
-		if (!response.ok) {
-			const text = await response.text().catch(() => "");
-			throw new SearchError(mapStatus(response.status), `Tavily ${response.status}: ${text.slice(0, 200)}`);
-		}
-
-		let data: unknown;
-		try {
-			data = await response.json();
-		} catch (err) {
-			throw new SearchError("unknown", `Tavily returned non-JSON body: ${(err as Error).message}`);
-		}
-		if (!isTavilyBody(data)) {
-			throw new SearchError(
-				"unknown",
-				"Tavily response has unexpected shape (missing 'results' array of {title,url,content,score}).",
-			);
-		}
-		return data.results.map((r) => ({
-			title: r.title,
-			url: r.url,
-			snippet: r.content,
-			score: r.score,
-		}));
 	}
 }
 

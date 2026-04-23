@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SessionWriter } from "./artifacts.js";
 import { LlmProtocolError, SearchBackendError } from "./errors.js";
@@ -52,9 +50,8 @@ export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 
 	let searchErrorStreak = 0;
 
-	const dumpMalformed = (iter: number) => (raw: string) => {
-		fs.writeFileSync(path.join(opts.session.dir, `malformed-iter-${iter}.txt`), raw);
-	};
+	// Route through SessionWriter so the dump file inherits 0600 (C2 — disclosure material).
+	const dumpMalformed = (iter: number) => (raw: string) => opts.session.writeMalformed(iter, raw);
 
 	try {
 		await drafter.prompt(renderSeed(opts.disclosure, opts.intake));

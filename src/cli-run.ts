@@ -188,12 +188,16 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	const cfg = loadConfigFromDisk(cliArgs);
 
 	// Abort plumbing — SIGINT or SIGTERM triggers a graceful abort.
+	// Track which signal fired so writeAbort can persist the correct reason.
 	const abortController = new AbortController();
+	let abortReason: "sigint" | "signal" = "sigint";
 	const onSigint = () => {
+		abortReason = "sigint";
 		console.error("\nAborting (SIGINT)...");
 		abortController.abort();
 	};
 	const onSigterm = () => {
+		abortReason = "signal";
 		console.error("\nAborting (SIGTERM)...");
 		abortController.abort();
 	};
@@ -243,7 +247,7 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 		});
 
 		if (result.status === "aborted") {
-			session.writeAbort(result.iterations, "sigint");
+			session.writeAbort(result.iterations, abortReason);
 			console.error(`\nAborted after ${result.iterations} iteration(s).`);
 			return 130;
 		}
@@ -263,7 +267,7 @@ export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<
 	} catch (err) {
 		// AbortError / aborted signal branch FIRST.
 		if (err instanceof AbortError || abortController.signal.aborted) {
-			session?.writeAbort(lastCompletedIteration, "sigint");
+			session?.writeAbort(lastCompletedIteration, abortReason);
 			console.error("\nAborted.");
 			return 130;
 		}
