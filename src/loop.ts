@@ -48,16 +48,20 @@ function enforcePassRule(v: Verdict, cfg: ResolvedConfig): Verdict {
 }
 
 /**
- * Rank a verdict for keep-best-so-far: primary key is how many axes meet
- * threshold (catching "previously-passing axis is now failing" regressions);
- * secondary key is the sum of scores (tiebreaker).
+ * Rank a verdict for keep-best-so-far. Primary key: no high-overlap prior-art
+ * flag (we never want to promote a draft that enforcePassRule disqualifies on
+ * that basis). Secondary: passing-axis count. Tertiary: sum of scores.
+ *
+ * Max possible (passing * 100 + sum) = 5*100 + 25 = 525, so the high-overlap
+ * bucket offset of 100_000 strictly dominates.
  *
  * Exported for tests. Pure function.
  */
 export function scoreOf(v: Verdict, thresholds: ResolvedConfig["thresholds"]): number {
 	const passing = AXIS_NAMES.filter((a) => v.scores[a] >= thresholds[a]).length;
 	const sum = AXIS_NAMES.reduce((s, a) => s + v.scores[a], 0);
-	return passing * 100 + sum;
+	const hasHighOverlap = v.prior_art_flags?.some((f) => f.overlap_level === "high") ?? false;
+	return (hasHighOverlap ? 0 : 100_000) + passing * 100 + sum;
 }
 
 /**
@@ -118,14 +122,18 @@ export async function ralphLoop(opts: RalphLoopOpts): Promise<RalphResult> {
 
 			opts.session.writeIteration(i, { draft, layman, verdict });
 
-			// Relative-regression check (#4): compare against best-so-far and surface
-			// axes that dropped ≥2 points. Purely informational in v0.2 — the loop
-			// keeps running; keep-best selection handles the safety net.
+			// Relative-regression check (#4): the iteration "regressed" only when BOTH
+			// (a) at least one axis dropped ≥2 points from best-so-far, AND
+			// (b) the overall scoreOf is strictly worse than best-so-far.
+			// Otherwise the user sees misleading warnings on iterations that
+			// trade one axis for larger gains elsewhere (e.g., claim_breadth
+			// 5→3 but layman 3→5 and other axes improve — net better draft).
 			let regressed = false;
 			let regressedAxes: ReturnType<typeof detectRegression> | undefined;
 			if (best) {
 				const ax = detectRegression(verdict, best.verdict);
-				if (ax.length > 0) {
+				const worseOverall = scoreOf(verdict, opts.config.thresholds) < scoreOf(best.verdict, opts.config.thresholds);
+				if (ax.length > 0 && worseOverall) {
 					regressed = true;
 					regressedAxes = ax;
 				}

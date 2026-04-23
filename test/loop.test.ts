@@ -227,8 +227,10 @@ describe("ralphLoop", () => {
 				summary: "",
 			};
 			expect(scoreOf(a, t)).toBeGreaterThan(scoreOf(b, t));
-			expect(scoreOf(a, t)).toBe(515);
-			expect(scoreOf(b, t)).toBe(113);
+			// Both get the no-high-overlap bonus (+100000) since neither has flags.
+			// A: 100000 + 5*100 + 15 = 100515.  B: 100000 + 1*100 + 13 = 100113.
+			expect(scoreOf(a, t)).toBe(100_515);
+			expect(scoreOf(b, t)).toBe(100_113);
 		});
 
 		it("detectRegression: returns axes dropping by ≥2, ignores ≤1 (noise)", () => {
@@ -324,6 +326,117 @@ describe("ralphLoop", () => {
 			expect(finalCall.draft).toBe("DRAFT-A");
 			expect(finalCall.layman).toBe("LA-A");
 			expect(finalCall.verdict.summary).toBe("iter1");
+		});
+
+		it("scoreOf: a draft with high-overlap prior-art flag loses to a safer draft with lower scores", () => {
+			// Same thresholds as baseCfg (4s).
+			const flaggedHighScore: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 5, claim_clarity: 5, spec_support: 5, basic_novelty: 5, layman_quality: 5 },
+				issues: [],
+				summary: "high numbers but blocked by high-overlap prior art",
+				prior_art_flags: [{ title: "X", overlap: "reads on claim 1", overlap_level: "high" }],
+			};
+			const safeLowerScore: Verdict = {
+				verdict: "revise",
+				scores: { claim_breadth: 3, claim_clarity: 3, spec_support: 3, basic_novelty: 3, layman_quality: 3 },
+				issues: [],
+				summary: "safer",
+			};
+			expect(scoreOf(safeLowerScore, baseCfg.thresholds)).toBeGreaterThan(
+				scoreOf(flaggedHighScore, baseCfg.thresholds),
+			);
+		});
+
+		it("keep-best: promotes a safer later draft over an earlier high-overlap-flagged one", async () => {
+			// iter 1: great numbers but high-overlap flag — should be treated as blocked.
+			// iter 2: worse numbers but no flag — should WIN keep-best.
+			const verdicts: Verdict[] = [
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 5, claim_clarity: 5, spec_support: 5, basic_novelty: 5, layman_quality: 5 },
+					issues: [],
+					summary: "iter1 flagged",
+					prior_art_flags: [{ title: "X", overlap: "reads on claim 1", overlap_level: "high" }],
+				},
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 3, claim_clarity: 3, spec_support: 3, basic_novelty: 3, layman_quality: 3 },
+					issues: [],
+					summary: "iter2 safe",
+				},
+			];
+			let evalIdx = 0;
+			const writeFinal = vi.fn();
+			const session = {
+				dir: "/tmp/fake-session",
+				writeIteration: vi.fn(),
+				writeFinal,
+				writeAbort: vi.fn(),
+				writeError: vi.fn(),
+				writeMalformed: vi.fn(),
+				writeInput: vi.fn(),
+				updateUsage: vi.fn(),
+			};
+			await ralphLoop({
+				disclosure: "d",
+				intake,
+				config: { ...baseCfg, max_iter: 2 },
+				makeDrafter: () => fakeDrafter(["D1\n---LAYMAN---\nL1", "D2\n---LAYMAN---\nL2"]),
+				makeEvaluator: () => {
+					const v = verdicts[evalIdx++] ?? verdicts[verdicts.length - 1];
+					if (!v) throw new Error("fake evaluator ran out of verdicts");
+					return fakeEvaluator(v);
+				},
+				// biome-ignore lint/suspicious/noExplicitAny: fake session writer
+				session: session as any,
+			});
+			expect(writeFinal).toHaveBeenCalledTimes(1);
+			const finalCall = writeFinal.mock.calls[0]?.[0];
+			expect(finalCall.verdict.summary).toBe("iter2 safe");
+			expect(finalCall.draft).toBe("D2");
+		});
+
+		it("regressed flag is NOT set when overall score improved (single axis drop + bigger gains elsewhere)", async () => {
+			// iter 1: {5,4,4,4,3} at thresholds 4 → passing=4, sum=20, scoreOf=420
+			// iter 2: {3,5,5,5,4} at thresholds 4 → passing=4, sum=22, scoreOf=422
+			// claim_breadth dropped 5→3 (axis regression) but overall score IMPROVED.
+			// Expectation: regressed flag NOT set.
+			const verdicts: Verdict[] = [
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 5, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 3 },
+					issues: [],
+					summary: "iter1",
+				},
+				{
+					verdict: "revise",
+					scores: { claim_breadth: 3, claim_clarity: 5, spec_support: 5, basic_novelty: 5, layman_quality: 4 },
+					issues: [],
+					summary: "iter2",
+				},
+			];
+			const events: LoopEvent[] = [];
+			let evalIdx = 0;
+			await ralphLoop({
+				disclosure: "d",
+				intake,
+				config: { ...baseCfg, max_iter: 2 },
+				makeDrafter: () => fakeDrafter(["D1\n---LAYMAN---\nL1", "D2\n---LAYMAN---\nL2"]),
+				makeEvaluator: () => {
+					const v = verdicts[evalIdx++] ?? verdicts[verdicts.length - 1];
+					if (!v) throw new Error("fake evaluator ran out of verdicts");
+					return fakeEvaluator(v);
+				},
+				// biome-ignore lint/suspicious/noExplicitAny: fake session writer
+				session: fakeSession as any,
+				onProgress: (ev) => events.push(ev),
+			});
+			const iter2 = events.find((e) => e.type === "iter_done" && e.iteration === 2);
+			expect(iter2).toBeDefined();
+			if (iter2 && iter2.type === "iter_done") {
+				expect(iter2.regressed).toBeUndefined();
+			}
 		});
 
 		it("LoopEvent iter_done carries regressed flag when axes dropped ≥2 from best-so-far", async () => {
