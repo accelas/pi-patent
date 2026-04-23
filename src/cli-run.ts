@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createInterface } from "node:readline/promises";
 import { makeDrafterAgent } from "./agents/drafter.js";
 import { makeEvaluatorAgent } from "./agents/evaluator.js";
 import { resolveModelOrThrow } from "./agents/model.js";
@@ -16,6 +15,7 @@ import { credentialStore } from "./oauth/store.js";
 import { loadPrompt } from "./prompts/load.js";
 import { promptVarsFor } from "./prompts/render.js";
 import { ensureCredentials } from "./providers.js";
+import { readLine, writePrompt } from "./stdin-lines.js";
 import { getSearchProvider } from "./tools/search/index.js";
 import type { ResolvedConfig, Verdict } from "./types.js";
 import { AXIS_NAMES } from "./types.js";
@@ -29,19 +29,15 @@ async function readDisclosure(input?: string): Promise<string> {
 		for await (const c of process.stdin) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
 		return Buffer.concat(chunks).toString("utf-8");
 	}
-	// Interactive prompt
-	const rl = createInterface({ input: process.stdin, output: process.stdout });
-	try {
-		console.log("Paste the disclosure; end with an empty line.");
-		let buf = "";
-		for await (const line of rl) {
-			if (line === "") break;
-			buf += `${line}\n`;
-		}
-		return buf;
-	} finally {
-		rl.close();
+	// Interactive prompt — read lines until an empty line.
+	console.log("Paste the disclosure; end with an empty line.");
+	let buf = "";
+	while (true) {
+		const line = await readLine();
+		if (line === "") break;
+		buf += `${line}\n`;
 	}
+	return buf;
 }
 
 // ---------- Preflight ----------
@@ -67,24 +63,21 @@ function preflight(cfg: ResolvedConfig): void {
 // ---------- Interactive prompt for ask_user ----------
 
 async function terminalPrompt(question: string, options?: string[]): Promise<string> {
-	const rl = createInterface({ input: process.stdin, output: process.stdout });
-	try {
-		if (options?.length) {
-			const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
-			const answer = (await rl.question(`\nQ: ${question}\n${lines}\n> `)).trim();
-			const n = Number(answer);
-			if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
-				const chosen = options[n - 1];
-				if (chosen !== undefined) return chosen;
-			}
-			if (options.includes(answer)) return answer;
-			const fallback = options[0];
-			return answer || (fallback !== undefined ? fallback : "");
+	if (options?.length) {
+		const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
+		writePrompt(`\nQ: ${question}\n${lines}\n> `);
+		const answer = (await readLine()).trim();
+		const n = Number(answer);
+		if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
+			const chosen = options[n - 1];
+			if (chosen !== undefined) return chosen;
 		}
-		return (await rl.question(`\nQ: ${question}\n> `)).trim();
-	} finally {
-		rl.close();
+		if (options.includes(answer)) return answer;
+		const fallback = options[0];
+		return answer || (fallback !== undefined ? fallback : "");
 	}
+	writePrompt(`\nQ: ${question}\n> `);
+	return (await readLine()).trim();
 }
 
 // ---------- Progress display ----------
