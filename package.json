@@ -1,0 +1,33 @@
+{
+	"name": "pi-patent",
+	"version": "0.1.0",
+	"description": "CLI that iterates inventor disclosures into utility patent drafts via a ralph loop.",
+	"type": "module",
+	"bin": { "pi-patent": "dist/cli.js" },
+	"main": "./dist/cli.js",
+	"exports": { ".": { "import": "./dist/cli.js" } },
+	"files": ["dist", "README.md", "LICENSE"],
+	"engines": { "node": ">=20.6.0" },
+	"scripts": {
+		"clean":          "shx rm -rf dist AppDir pi-patent-*.AppImage",
+		"build":          "tsc -p tsconfig.build.json && shx mkdir -p dist/prompts && shx cp src/prompts/*.md dist/prompts/",
+		"build:binary":   "npm run build && bun build --compile ./dist/cli.js --outfile dist/pi-patent",
+		"build:appimage": "npm run build:binary && scripts/build-appimage.sh",
+		"check":          "biome check --write --error-on-warnings . && tsc --noEmit",
+		"test":           "vitest --run",
+		"dev":            "tsc -p tsconfig.build.json --watch"
+	},
+	"dependencies": {
+		"@mariozechner/pi-ai": "^0.69.0",
+		"@mariozechner/pi-agent-core": "^0.69.0",
+		"typebox": "^1.1.24",
+		"smol-toml": "^1.3.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@types/node": "^24.3.0",
+		"shx": "^0.4.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.4"
+	}
+}
