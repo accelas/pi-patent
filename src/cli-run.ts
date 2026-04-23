@@ -1,6 +1,235 @@
-// src/cli-run.ts (stub — full impl in task 9.3)
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createInterface } from "node:readline/promises";
+import { getModels } from "@mariozechner/pi-ai";
+import { makeDrafterAgent } from "./agents/drafter.js";
+import { makeEvaluatorAgent } from "./agents/evaluator.js";
+import { SessionWriter, slugFromDisclosure } from "./artifacts.js";
+import type { CliArgs } from "./config.js";
+import { loadConfigFromDisk } from "./config.js";
+import { AbortError, IntakeRejected, LlmProtocolError, SearchBackendError, UserError } from "./errors.js";
+import { defaultIntakeDeps, runIntake } from "./intake.js";
+import type { LoopEvent, RalphResult } from "./loop.js";
+import { ralphLoop } from "./loop.js";
+import { credentialStore } from "./oauth/store.js";
+import { ensureCredentials } from "./providers.js";
+import { loadPrompt } from "./prompts/load.js";
+import { promptVarsFor } from "./prompts/render.js";
+import { getSearchProvider } from "./tools/search/index.js";
+import type { ResolvedConfig, Verdict } from "./types.js";
+import { AXIS_NAMES } from "./types.js";
 import type { parseCliArgs } from "./cli.js";
 
-export async function runMain(_args: ReturnType<typeof parseCliArgs>): Promise<number> {
-	throw new Error("runMain not yet implemented");
+// ---------- Input reading ----------
+
+async function readDisclosure(input?: string): Promise<string> {
+	if (input) return fs.readFileSync(input, "utf-8");
+	if (!process.stdin.isTTY) {
+		const chunks: Buffer[] = [];
+		for await (const c of process.stdin) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+		return Buffer.concat(chunks).toString("utf-8");
+	}
+	// Interactive prompt
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		console.log("Paste the disclosure; end with an empty line.");
+		let buf = "";
+		for await (const line of rl) {
+			if (line === "") break;
+			buf += `${line}\n`;
+		}
+		return buf;
+	} finally {
+		rl.close();
+	}
+}
+
+// ---------- Preflight ----------
+
+function preflight(cfg: ResolvedConfig): void {
+	for (const role of ["intake", "drafter", "evaluator"] as const) {
+		const { provider, model } = cfg.models[role];
+		// biome-ignore lint/suspicious/noExplicitAny: getModels uses strict generic literals; we validate at runtime below.
+		const all = getModels(provider as any);
+		if (!all || !all.find((m) => m.id === model)) {
+			throw new UserError(
+				`Unknown model "${model}" for provider "${provider}" (role: ${role}). ` +
+					`Valid ids: ${(all ?? []).map((m) => m.id).join(", ") || "(none — unknown provider)"}`,
+			);
+		}
+		ensureCredentials(provider, role, credentialStore);
+	}
+	if (cfg.web_search) getSearchProvider(cfg.search_provider).validate();
+	fs.mkdirSync(cfg.out_dir, { recursive: true });
+	const probe = path.join(cfg.out_dir, `.probe-${process.pid}`);
+	fs.writeFileSync(probe, "");
+	fs.rmSync(probe);
+	for (const name of ["intake", "drafter", "evaluator"] as const) {
+		loadPrompt(name, promptVarsFor(name, cfg));
+	}
+}
+
+// ---------- Interactive prompt for ask_user ----------
+
+async function terminalPrompt(question: string, options?: string[]): Promise<string> {
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		if (options && options.length) {
+			const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join("\n");
+			const answer = (await rl.question(`\nQ: ${question}\n${lines}\n> `)).trim();
+			const n = Number(answer);
+			if (!Number.isNaN(n) && n >= 1 && n <= options.length) return options[n - 1]!;
+			if (options.includes(answer)) return answer;
+			return answer || options[0]!; // empty defaults to first option
+		}
+		return (await rl.question(`\nQ: ${question}\n> `)).trim();
+	} finally {
+		rl.close();
+	}
+}
+
+// ---------- Progress display ----------
+
+function formatScores(v: Verdict): string {
+	return AXIS_NAMES.map((a) => `${a}=${v.scores[a]}`).join(" ");
+}
+
+function makeProgressReporter(cfg: ResolvedConfig): (ev: LoopEvent) => void {
+	return (ev: LoopEvent) => {
+		if (ev.type === "iter_start") {
+			console.log(`\n[iter ${ev.iteration}/${cfg.max_iter}] drafting + evaluating...`);
+		} else if (ev.type === "iter_done") {
+			const v = ev.verdict;
+			console.log(`[iter ${ev.iteration}] ${v.verdict.toUpperCase()} — ${formatScores(v)}`);
+			if (v.verdict === "revise" && v.next_iteration_focus) {
+				console.log(`  focus: ${v.next_iteration_focus}`);
+			}
+		}
+	};
+}
+
+// ---------- Error → exit code mapping ----------
+
+function exitCodeFor(err: unknown): number {
+	if (err instanceof UserError) return 2;
+	if (err instanceof IntakeRejected) return 3;
+	if (err instanceof LlmProtocolError) return 4;
+	if (err instanceof SearchBackendError) return 5;
+	return 1;
+}
+
+// ---------- Main ----------
+
+export async function runMain(parsed: ReturnType<typeof parseCliArgs>): Promise<number> {
+	// With exactOptionalPropertyTypes: true, conditionally spread rather than
+	// assigning undefined to optional fields.
+	const cliArgs: CliArgs = {
+		...(parsed.maxIter !== undefined ? { maxIter: parsed.maxIter } : {}),
+		...(parsed.model !== undefined ? { model: parsed.model } : {}),
+		...(parsed.out !== undefined ? { out: parsed.out } : {}),
+		...(parsed.quiet !== undefined ? { quiet: parsed.quiet } : {}),
+		...(parsed.noWeb ? { web_search: false } : {}),
+	};
+	const cfg = loadConfigFromDisk(cliArgs);
+
+	// Read disclosure FIRST and validate length BEFORE preflight (spec §12.1.1).
+	const disclosure = (await readDisclosure(parsed.input)).trim();
+	if (disclosure.length < 20) {
+		throw new UserError(
+			`Disclosure too short (${disclosure.length} chars). Provide at least 20 characters describing the invention.`,
+		);
+	}
+
+	// Abort plumbing — SIGINT triggers a graceful abort.
+	const abortController = new AbortController();
+	const onSigint = () => {
+		console.error("\nAborting (SIGINT)...");
+		abortController.abort();
+	};
+	process.on("SIGINT", onSigint);
+
+	let session: SessionWriter | null = null;
+	let lastCompletedIteration = 0;
+
+	try {
+		preflight(cfg);
+
+		// Intake phase
+		console.log("Running intake...");
+		const { intake, transcript } = await runIntake(disclosure, cfg, defaultIntakeDeps(cfg, terminalPrompt));
+
+		// Open session once intake is accepted.
+		const slug = slugFromDisclosure(disclosure);
+		session = SessionWriter.create(cfg.out_dir, slug, { intake, config: cfg });
+		session.writeInput(disclosure, intake, transcript);
+		console.log(`Session: ${session.dir}`);
+
+		// Ralph loop
+		const onProgress = makeProgressReporter(cfg);
+		const result: RalphResult = await ralphLoop({
+			disclosure,
+			intake,
+			config: cfg,
+			makeDrafter: () => makeDrafterAgent(cfg),
+			makeEvaluator: () => makeEvaluatorAgent(cfg),
+			session,
+			onProgress: (ev) => {
+				onProgress(ev);
+				if (ev.type === "iter_done") lastCompletedIteration = ev.iteration;
+			},
+			signal: abortController.signal,
+		});
+
+		if (result.status === "aborted") {
+			session.writeAbort(result.iterations, "sigint");
+			console.error(`\nAborted after ${result.iterations} iteration(s).`);
+			return 130;
+		}
+
+		if (result.status === "passed") {
+			console.log(`\nPASSED in ${result.iterations} iteration(s).`);
+			console.log(`Draft:  ${path.join(session.dir, "draft.md")}`);
+			console.log(`Layman: ${path.join(session.dir, "layman.md")}`);
+			return 0;
+		}
+
+		// max_iter
+		console.log(`\nMax iterations (${result.iterations}) reached without PASS. Draft saved.`);
+		console.log(`Draft:  ${path.join(session.dir, "draft.md")}`);
+		console.log(`Layman: ${path.join(session.dir, "layman.md")}`);
+		return 0;
+	} catch (err) {
+		// AbortError / aborted signal branch FIRST.
+		if (err instanceof AbortError || abortController.signal.aborted) {
+			session?.writeAbort(lastCompletedIteration, "sigint");
+			console.error("\nAborted.");
+			return 130;
+		}
+
+		// Categorize and persist the error before exit-code dispatch.
+		let category: "user" | "llm_protocol" | "search_backend" | "unexpected";
+		if (err instanceof UserError || err instanceof IntakeRejected) category = "user";
+		else if (err instanceof LlmProtocolError) category = "llm_protocol";
+		else if (err instanceof SearchBackendError) category = "search_backend";
+		else category = "unexpected";
+
+		const message = err instanceof Error ? err.message : String(err);
+		session?.writeError({ category, message, lastCompletedIteration });
+
+		if (err instanceof UserError) {
+			console.error(`Error: ${message}`);
+		} else if (err instanceof IntakeRejected) {
+			console.error(`Intake rejected: ${message}`);
+		} else if (err instanceof LlmProtocolError) {
+			console.error(`LLM protocol error: ${message}`);
+		} else if (err instanceof SearchBackendError) {
+			console.error(`Search backend error: ${message}`);
+		} else {
+			console.error(err);
+		}
+
+		return exitCodeFor(err);
+	} finally {
+		process.off("SIGINT", onSigint);
+	}
 }
