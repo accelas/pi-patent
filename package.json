@@ -1,6 +1,6 @@
 {
 	"name": "pi-patent",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "CLI that iterates inventor disclosures into utility patent drafts via a ralph loop.",
 	"type": "module",
 	"bin": { "pi-patent": "dist/cli.js" },
