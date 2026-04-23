@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
-import { getModels } from "@mariozechner/pi-ai";
 import { makeDrafterAgent } from "./agents/drafter.js";
 import { makeEvaluatorAgent } from "./agents/evaluator.js";
+import { resolveModelOrThrow } from "./agents/model.js";
 import { SessionWriter, slugFromDisclosure } from "./artifacts.js";
 import type { parseCliArgs } from "./cli.js";
 import type { CliArgs } from "./config.js";
@@ -49,14 +49,9 @@ async function readDisclosure(input?: string): Promise<string> {
 function preflight(cfg: ResolvedConfig): void {
 	for (const role of ["intake", "drafter", "evaluator"] as const) {
 		const { provider, model } = cfg.models[role];
-		// biome-ignore lint/suspicious/noExplicitAny: getModels uses strict generic literals; we validate at runtime below.
-		const all = getModels(provider as any);
-		if (!all || !all.find((m) => m.id === model)) {
-			throw new UserError(
-				`Unknown model "${model}" for provider "${provider}" (role: ${role}). ` +
-					`Valid ids: ${(all ?? []).map((m) => m.id).join(", ") || "(none — unknown provider)"}`,
-			);
-		}
+		// resolveModelOrThrow handles custom providers (e.g. openrouter) AND pi-ai's registry.
+		// Throws UserError with role-scoped message on unknown model/provider combo.
+		resolveModelOrThrow(role, provider, model);
 		ensureCredentials(provider, role, credentialStore);
 	}
 	if (cfg.web_search) getSearchProvider(cfg.search_provider).validate();

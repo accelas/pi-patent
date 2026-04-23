@@ -16,8 +16,20 @@ const stubStore = {
 };
 
 describe("PROVIDER_META", () => {
-	it("includes anthropic, openai, openai-codex, google, groq", () => {
-		expect(Object.keys(PROVIDER_META).sort()).toEqual(["anthropic", "google", "groq", "openai", "openai-codex"]);
+	it("includes anthropic, openai, openai-codex, google, groq, openrouter", () => {
+		expect(Object.keys(PROVIDER_META).sort()).toEqual([
+			"anthropic",
+			"google",
+			"groq",
+			"openai",
+			"openai-codex",
+			"openrouter",
+		]);
+	});
+
+	it("openrouter uses OPENROUTER_API_KEY", () => {
+		expect(PROVIDER_META.openrouter.kind).toBe("api-key");
+		expect((PROVIDER_META.openrouter as { envKey: string }).envKey).toBe("OPENROUTER_API_KEY");
 	});
 
 	it("openai-codex kind is oauth with oauthProviderId", () => {

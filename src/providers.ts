@@ -35,6 +35,7 @@ export const PROVIDER_META = {
 	},
 	google: { kind: "api-key", envKey: "GEMINI_API_KEY" },
 	groq: { kind: "api-key", envKey: "GROQ_API_KEY" },
+	openrouter: { kind: "api-key", envKey: "OPENROUTER_API_KEY" },
 } as const satisfies Record<string, ProviderMeta>;
 
 export type KnownProvider = keyof typeof PROVIDER_META;
