@@ -25,11 +25,7 @@ export function substitute(body: string, vars: Record<string, string | number>):
 	return out;
 }
 
-export function loadPromptFrom(
-	dir: string,
-	name: string,
-	vars: Record<string, string | number>,
-): string {
+export function loadPromptFrom(dir: string, name: string, vars: Record<string, string | number>): string {
 	const file = path.join(dir, `${name}.md`);
 	if (!fs.existsSync(file)) {
 		throw new UserError(`Prompt not found: ${file}`);
@@ -49,9 +45,7 @@ export function resolvePromptPath(name: PromptName): string {
 	for (const p of candidates) {
 		if (fs.existsSync(p)) return p;
 	}
-	throw new UserError(
-		`Prompt "${name}" not found. Searched:\n${candidates.map((p) => `  - ${p}`).join("\n")}`,
-	);
+	throw new UserError(`Prompt "${name}" not found. Searched:\n${candidates.map((p) => `  - ${p}`).join("\n")}`);
 }
 
 export function loadPrompt(name: PromptName, vars: Record<string, string | number> = {}): string {
