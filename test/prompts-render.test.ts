@@ -59,6 +59,43 @@ describe("renderCritique", () => {
 		expect(out).toContain("Do not regress");
 		expect(out).toMatch(/claim_clarity \(4\)/);
 	});
+
+	it("renderSeed leaves a blank line before the trailing instruction", () => {
+		const out = renderSeed("X", { accepted: true, scope_preference: "broad" });
+		expect(out).toMatch(/\n\nEmit the patent draft/);
+	});
+
+	it("renderCritique renders secondary (non-high) issues in their own section", () => {
+		const v: Verdict = {
+			verdict: "revise",
+			scores: { claim_breadth: 4, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+			issues: [
+				{ axis: "layman_quality", issue: "minor jargon", suggestion: "define 'idempotent'", priority: "med" },
+				{ axis: "spec_support", issue: "nitpick", suggestion: "tidy up §0004", priority: "low" },
+			],
+			summary: "polish only",
+		} as unknown as Verdict;
+		const out = renderCritique(v, 3);
+		expect(out).toContain("Secondary notes:");
+		expect(out).toContain("minor jargon");
+		expect(out).toContain("tidy up §0004");
+	});
+
+	it("renderCritique lists prior-art flags with overlap_level prefix", () => {
+		const v: Verdict = {
+			verdict: "revise",
+			scores: { claim_breadth: 2, claim_clarity: 4, spec_support: 4, basic_novelty: 4, layman_quality: 4 },
+			issues: [{ axis: "claim_breadth", issue: "too narrow", suggestion: "broaden claim 1", priority: "high" }],
+			prior_art_flags: [
+				{ title: "US 10,000,000", url: "https://x", overlap: "reads on claim 1", overlap_level: "high" },
+			],
+			summary: "prior art blocks pass",
+		} as unknown as Verdict;
+		const out = renderCritique(v, 2);
+		expect(out).toMatch(/\[high\] "US 10,000,000"/);
+		expect(out).toContain("(https://x)");
+		expect(out).toContain("reads on claim 1");
+	});
 });
 
 describe("promptVarsFor", () => {

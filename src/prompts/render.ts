@@ -17,7 +17,7 @@ export function renderSeed(disclosure: string, intake: IntakeResult): string {
 		"",
 		"Emit the patent draft + layman block now.",
 	];
-	return lines.filter(Boolean).join("\n");
+	return lines.filter((x): x is string => x !== undefined && x !== false).join("\n");
 }
 
 export function renderEvalInput(disclosure: string, intake: IntakeResult, draft: string, layman: string): string {
@@ -75,7 +75,7 @@ export function renderCritique(v: Verdict, iter: number): string {
 		"",
 		"Revise and re-emit the full patent draft + layman block in the same two-block format.",
 	];
-	return parts.filter(Boolean).join("\n");
+	return parts.filter((x): x is string => x !== undefined && x !== false).join("\n");
 }
 
 export function promptVarsFor(role: RoleName, cfg: ResolvedConfig): Record<string, string> {
