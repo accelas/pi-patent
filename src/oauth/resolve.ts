@@ -1,5 +1,6 @@
 import { getEnvApiKey as realGetEnvApiKey } from "@mariozechner/pi-ai";
 import { type OAuthProviderId, getOAuthApiKey as realGetOAuthApiKey } from "@mariozechner/pi-ai/oauth";
+import { PROVIDER_META } from "../providers.js";
 import { type CredentialStore, credentialStore as defaultStore } from "./store.js";
 
 const OAUTH_PROVIDERS = new Set<OAuthProviderId>(["openai-codex", "anthropic"]);
@@ -30,6 +31,14 @@ export function makeResolveApiKey(deps: ResolveDeps = {}) {
 					return result.apiKey;
 				}
 			}
+		}
+
+		// pi-patent's PROVIDER_META covers providers pi-ai's env-api-keys doesn't know about
+		// (e.g. openrouter). Check our table before falling back to pi-ai's.
+		const meta = (PROVIDER_META as Record<string, { envKey?: string }>)[provider];
+		if (meta?.envKey) {
+			const fromEnv = process.env[meta.envKey];
+			if (fromEnv) return fromEnv;
 		}
 
 		return getEnvApiKey(provider);

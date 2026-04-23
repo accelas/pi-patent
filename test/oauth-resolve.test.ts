@@ -24,6 +24,8 @@ afterEach(() => {
 	delete process.env.ANTHROPIC_API_KEY;
 	// biome-ignore lint/performance/noDelete: test env cleanup
 	delete process.env.OPENAI_API_KEY;
+	// biome-ignore lint/performance/noDelete: test env cleanup
+	delete process.env.OPENROUTER_API_KEY;
 });
 
 describe("resolveApiKey", () => {
@@ -53,5 +55,15 @@ describe("resolveApiKey", () => {
 			getEnvApiKey: (p: string) => (p === "openai" ? "env-k" : undefined),
 		});
 		expect(await resolve("openai")).toBe("env-k");
+	});
+
+	it("openrouter: reads OPENROUTER_API_KEY via PROVIDER_META (pi-ai doesn't know it)", async () => {
+		process.env.OPENROUTER_API_KEY = "sk-or-v1-xyz";
+		const resolve = makeResolveApiKey({
+			store: fakeStore as never,
+			getOAuthApiKey: vi.fn(),
+			getEnvApiKey: () => undefined, // pi-ai returns undefined for custom providers
+		});
+		expect(await resolve("openrouter")).toBe("sk-or-v1-xyz");
 	});
 });
